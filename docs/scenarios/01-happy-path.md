@@ -24,7 +24,7 @@ Kafka producer publishes messages to a topic the consumer is subscribed to.
 6. **Dispatcher**: Calls `OffsetCoordinator.BatchDispatched(partition, maxOffset)`.
 7. **Worker**: Executes `BatchProcessor(ctx, batch)` — writes to the target service.
 8. **Worker**: Returns `nil` (success) to the Dispatcher.
-9. **Dispatcher**: Calls `OffsetCoordinator.BatchComplete(partition)`.
+9. **Dispatcher**: Calls `OffsetCoordinator.BatchComplete(partition, maxOffset)`.
 10. **Poll loop**: On next commit timer tick, calls `OffsetCoordinator.Committable()`.
 11. **OffsetCoordinator**: Returns `map[partition] = maxOffset + 1` for completed partitions.
 12. **Poll loop**: Calls `CommitOffsets()` to Kafka with the returned offsets.
@@ -62,7 +62,7 @@ sequenceDiagram
     W->>TS: BatchProcessor(ctx, batch)
     TS-->>W: success
     W-->>D: nil (success)
-    D->>OC: BatchComplete(partition)
+    D->>OC: BatchComplete(partition, maxOffset)
 
     Note over PL: commit timer fires
     PL->>OC: Committable()

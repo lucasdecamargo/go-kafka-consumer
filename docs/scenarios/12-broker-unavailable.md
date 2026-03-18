@@ -120,7 +120,7 @@ sequenceDiagram
     PL->>PL: stop dispatching
 
     W-->>D: in-flight batch completes
-    D->>OC: BatchComplete(partition)
+    D->>OC: BatchComplete(partition, maxOffset)
 
     loop session keepalive
         PL->>K: Poll() (no messages, heartbeat only)

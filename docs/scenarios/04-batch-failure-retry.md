@@ -31,7 +31,7 @@ A worker's `BatchProcessor` call returns a **transient error** (any error that i
 8. **Worker**: Executes `BatchProcessor(ctx, batch)` again.
 9. **Worker**: Returns `nil` (success).
 10. **Dispatcher**: Reports the success to the **circuit breaker**.
-11. **Dispatcher**: Calls `OffsetCoordinator.BatchComplete(partition)`.
+11. **Dispatcher**: Calls `OffsetCoordinator.BatchComplete(partition, maxOffset)`.
 
 ### Variant: Multiple Consecutive Failures
 
@@ -90,5 +90,5 @@ sequenceDiagram
     W-->>CB: nil
     CB->>CB: record success in sliding window
     CB-->>D: nil
-    D->>OC: BatchComplete(partition)
+    D->>OC: BatchComplete(partition, maxOffset)
 ```

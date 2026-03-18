@@ -196,7 +196,7 @@ sequenceDiagram
     D->>W: retry held batches
     W->>TS: BatchProcessor — SUCCESS
     W-->>D: nil
-    D->>OC: BatchComplete(partition)
+    D->>OC: BatchComplete(partition, maxOffset)
 
     PL->>K: Poll()
     K-->>PL: messages (resumed)

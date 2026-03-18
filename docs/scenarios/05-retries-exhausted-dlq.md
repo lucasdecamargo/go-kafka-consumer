@@ -33,7 +33,7 @@ A batch is routed to the Dead Letter Queue in one of two cases:
    - Error classification: `non_retryable`.
    - Timestamp of the original message and the failure.
 6. **Dispatcher**: Waits for DLQ produce acknowledgement.
-7. **Dispatcher**: Calls `OffsetCoordinator.BatchComplete(partition)` — the batch is considered "handled" (via DLQ), so the offset can advance.
+7. **Dispatcher**: Calls `OffsetCoordinator.BatchComplete(partition, maxOffset)` — the batch is considered "handled" (via DLQ), so the offset can advance.
 8. **Poll loop**: On next commit timer tick, commits the offset past the DLQ'd batch.
 
 ### Case B: Retries Exhausted with Circuit Closed
@@ -51,7 +51,7 @@ A batch is routed to the Dead Letter Queue in one of two cases:
    - Retry count and history.
    - Timestamp of the original message and the failure.
 7. **Dispatcher**: Waits for DLQ produce acknowledgement.
-8. **Dispatcher**: Calls `OffsetCoordinator.BatchComplete(partition)`.
+8. **Dispatcher**: Calls `OffsetCoordinator.BatchComplete(partition, maxOffset)`.
 9. **Poll loop**: On next commit timer tick, commits the offset past the DLQ'd batch.
 
 ## State Changes
@@ -92,7 +92,7 @@ sequenceDiagram
     D->>DLQ: produce messages + metadata (classification: non_retryable)
     DLQ-->>D: ack
 
-    D->>OC: BatchComplete(partition)
+    D->>OC: BatchComplete(partition, maxOffset)
     Note over OC: offset advances past DLQ'd batch
 ```
 
@@ -121,6 +121,6 @@ sequenceDiagram
     D->>DLQ: produce messages + metadata (classification: transient_exhausted)
     DLQ-->>D: ack
 
-    D->>OC: BatchComplete(partition)
+    D->>OC: BatchComplete(partition, maxOffset)
     Note over OC: offset advances past DLQ'd batch
 ```

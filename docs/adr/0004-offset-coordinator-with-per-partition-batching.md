@@ -76,14 +76,17 @@ type OffsetCoordinator interface {
     BatchDispatched(partition int32, maxOffset int64)
 
     // BatchComplete records that the in-flight batch for the specified
-    // partition has been successfully processed. The offset registered
-    // via BatchDispatched becomes eligible for commit.
-    // Called by the Dispatcher when a worker reports success.
-    BatchComplete(partition int32)
+    // partition has been fully processed (success, DLQ'd, or abandoned).
+    // The maxOffset must match the dispatched offset for defensive
+    // validation. Idempotent: completing an already-completed batch
+    // is a no-op. Panics if maxOffset does not match.
+    // Called by the Dispatcher when a worker reports completion.
+    BatchComplete(partition int32, maxOffset int64)
 
     // Committable returns the next offset to fetch (maxOffset + 1) for
-    // each partition that has completed work since the last call to
-    // Committable. Returns an empty map if no new work has completed.
+    // each partition with a completed batch. Returns the same offsets on
+    // repeated calls until state changes (new dispatch, reset, or
+    // completion). This ensures failed commits are retried automatically.
     // Called periodically by the poll loop on a timer.
     Committable() map[int32]int64
 
@@ -103,7 +106,7 @@ type OffsetCoordinator interface {
 3. Dispatcher assembles batch (size/linger), dispatches to worker
 4. Dispatcher calls OffsetCoordinator.BatchDispatched(partition, maxOffset)
 5. Worker processes batch, returns success/failure to Dispatcher
-6. On success: Dispatcher calls OffsetCoordinator.BatchComplete(partition)
+6. On completion: Dispatcher calls OffsetCoordinator.BatchComplete(partition, maxOffset)
 7. On timer tick: Poll loop calls OffsetCoordinator.Committable()
 8. Poll loop commits returned offsets to Kafka
 ```

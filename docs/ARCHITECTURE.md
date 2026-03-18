@@ -129,11 +129,14 @@ type OffsetCoordinator interface {
     // Called by Dispatcher when dispatching a batch to a worker.
     BatchDispatched(partition int32, maxOffset int64)
 
-    // Called by Dispatcher when a worker reports success.
-    BatchComplete(partition int32)
+    // Called by Dispatcher when a worker reports completion.
+    // maxOffset must match dispatched offset (defensive validation).
+    // Idempotent: completing an already-completed batch is a no-op.
+    BatchComplete(partition int32, maxOffset int64)
 
     // Called by poll loop on timer, shutdown, or revocation.
-    // Returns maxOffset+1 for partitions with completed work since last call.
+    // Returns maxOffset+1 for partitions with completed batches.
+    // Stable: returns same offsets until state changes.
     Committable() map[int32]int64
 
     // Called by poll loop on partition revocation.
@@ -146,7 +149,7 @@ type OffsetCoordinator interface {
 | Caller | Method | When |
 |--------|--------|------|
 | Dispatcher | `BatchDispatched()` | After dispatching a batch to a worker |
-| Dispatcher | `BatchComplete()` | After a worker reports success |
+| Dispatcher | `BatchComplete()` | After a worker reports completion (success, DLQ, or abandoned) |
 | Poll loop | `Committable()` | On periodic timer, on shutdown, on revocation |
 | Poll loop | `Reset()` | On partition revocation |
 
@@ -202,7 +205,7 @@ The Dispatcher interface decouples message routing from both the poll loop and w
 6. Dispatcher calls OffsetCoordinator.BatchDispatched(partition, maxOffset)
 7. Worker executes BatchProcessor(ctx, batch)
 8. Worker returns success to Dispatcher
-9. Dispatcher calls OffsetCoordinator.BatchComplete(partition)
+9. Dispatcher calls OffsetCoordinator.BatchComplete(partition, maxOffset)
 10. On timer tick: Poll loop calls OffsetCoordinator.Committable()
 11. Poll loop commits returned offsets to Kafka via CommitOffsets()
 ```

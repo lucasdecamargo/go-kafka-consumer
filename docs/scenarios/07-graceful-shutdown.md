@@ -104,7 +104,7 @@ sequenceDiagram
     PL->>D: Close(ctx)
     Note over D: stop accepting, drain workers
     W-->>D: in-flight batch completes
-    D->>OC: BatchComplete(partition)
+    D->>OC: BatchComplete(partition, maxOffset)
     D-->>PL: Close() returns nil
 
     PL->>OC: Committable()
