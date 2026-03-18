@@ -268,6 +268,45 @@ Degraded mode: pause all partitions, stop dispatch, continue `Poll()`, readiness
 
 ---
 
+## Cross-Cutting Concerns (ADR-0008)
+
+### Constructor Pattern
+
+All components use the **functional options pattern**:
+
+```go
+dispatcher, err := NewDispatcher(cfg,
+    WithLogger(logger),
+    WithMetrics(reg),
+)
+```
+
+- **Required dependencies** (config, OffsetCoordinator) are positional parameters.
+- **Optional dependencies** (logger, metrics) are functional options with sensible defaults.
+- Adding new options never breaks existing call sites.
+
+### Logging
+
+- **Library:** Go's standard `slog` package (`*slog.Logger`).
+- **Injection:** Via `WithLogger(logger)` functional option. Default: `slog.Default()`.
+- **Format:** JSON structured logging with contextual fields (component, partition, offset range).
+
+### Metrics
+
+- **Library:** `prometheus/client_golang` with `promauto.With(reg)`.
+- **Injection:** Components receive a `prometheus.Registerer` via `WithMetrics(reg)`. Metrics are created internally by the component — callers don't need to know what's measured.
+- **Naming:** Constants in dedicated `metrics.go` files. Convention: `kafka_consumer_<component>_<metric>` with standard suffixes (`_total`, `_seconds`).
+- **Default:** `prometheus.DefaultRegisterer` if no option is provided.
+
+### Configuration
+
+- **Per-component config structs** (e.g., `DispatcherConfig`, `PollLoopConfig`).
+- **Required constructor parameters** — not optional.
+- **Validated at startup** — fail fast on invalid values.
+- **`main()` owns wiring** — creates registry, logger, config structs, and assembles components.
+
+---
+
 ## Scaling Model
 
 | Dimension | Mechanism |
@@ -364,6 +403,7 @@ Detailed execution path documentation lives in `docs/scenarios/`. Each scenario 
 | [0005](adr/0005-panic-recovery-with-graceful-shutdown.md) | Recover Worker Panics with Graceful Shutdown | Accepted |
 | [0006](adr/0006-broker-unavailability-handling.md) | Broker Unavailability with Dispatch Pause and Readiness Degradation | Accepted |
 | [0007](adr/0007-circuit-breaker-for-target-unavailability.md) | Circuit Breaker for Target Service Unavailability with Error Classification | Accepted |
+| [0008](adr/0008-cross-cutting-concerns.md) | Cross-Cutting Concerns: Logging, Metrics, Configuration, Constructor Pattern | Accepted |
 
 ---
 

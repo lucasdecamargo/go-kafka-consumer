@@ -35,6 +35,7 @@ Kafka Topic
 > - Recover worker panics with graceful shutdown. See [ADR-0005](adr/0005-panic-recovery-with-graceful-shutdown.md).
 > - Broker unavailability handling with dispatch pause and readiness degradation. See [ADR-0006](adr/0006-broker-unavailability-handling.md).
 > - Circuit breaker for target service unavailability with error classification. See [ADR-0007](adr/0007-circuit-breaker-for-target-unavailability.md).
+> - Cross-cutting concerns: functional options, slog logging, Prometheus metrics, per-component configuration. See [ADR-0008](adr/0008-cross-cutting-concerns.md).
 
 ---
 
@@ -131,8 +132,8 @@ The following ordering modes MUST be supported via separate Dispatcher implement
 
 ### NFR-3: Observability
 
-- **NFR-3.1**: The service MUST expose metrics: consumer lag, throughput (messages/sec), batch processing latency, dispatcher queue depth, worker utilization, offset commit rate, error rates, and DLQ production rate.
-- **NFR-3.2**: The service MUST use structured logging (JSON) with correlation IDs for tracing messages through the pipeline.
+- **NFR-3.1**: The service MUST expose metrics via Prometheus using `prometheus/client_golang`. Metrics MUST include: consumer lag, throughput (messages/sec), batch processing latency, dispatcher queue depth, worker utilization, offset commit rate, error rates (transient/non-retryable), DLQ production rate, circuit breaker state transitions, and degraded mode duration. Metric names MUST be defined as constants in dedicated `metrics.go` files, following the `kafka_consumer_<component>_<metric>` naming convention. See [ADR-0008](adr/0008-cross-cutting-concerns.md).
+- **NFR-3.2**: The service MUST use Go's `slog` standard library for structured logging (JSON) with correlation IDs for tracing messages through the pipeline. Loggers MUST be injected into components via functional options (`WithLogger`), not used as globals. See [ADR-0008](adr/0008-cross-cutting-concerns.md).
 - **NFR-3.3**: The service MUST expose health check endpoints (liveness and readiness) for orchestrator integration. The liveness probe MUST succeed as long as the poll loop is running. The readiness probe MUST fail when the service is in degraded mode (any degraded reason active: `BrokerUnavailable` or `TargetUnavailable`). See [ADR-0006](adr/0006-broker-unavailability-handling.md), [ADR-0007](adr/0007-circuit-breaker-for-target-unavailability.md).
 
 ### NFR-4: Performance
@@ -146,6 +147,8 @@ The following ordering modes MUST be supported via separate Dispatcher implement
 - **NFR-5.1**: All tunable parameters MUST be configurable via environment variables and/or a configuration file.
 - **NFR-5.2**: The service MUST provide sensible defaults for all configuration values.
 - **NFR-5.3**: Configuration MUST be validated at startup; the service MUST fail fast on invalid configuration.
+- **NFR-5.7**: Each component MUST define its own configuration struct (e.g., `DispatcherConfig`, `PollLoopConfig`). The bootstrap function (`main`) populates these structs from external configuration sources and passes them as required constructor parameters. See [ADR-0008](adr/0008-cross-cutting-concerns.md).
+- **NFR-5.8**: All component constructors MUST follow the functional options pattern: `NewX(cfg XConfig, opts ...XOption)`. Required dependencies are positional parameters; optional dependencies (logger, metrics registerer) are functional options with sensible defaults. See [ADR-0008](adr/0008-cross-cutting-concerns.md).
 - **NFR-5.4**: The shutdown timeout MUST be configurable (default: 25 seconds). It MUST be validated to be less than the Kubernetes `terminationGracePeriodSeconds` when known.
 - **NFR-5.5**: The commit failure threshold MUST be configurable (default: 3 consecutive failures). This controls when the service enters degraded mode on broker unavailability.
 - **NFR-5.6**: Circuit breaker parameters MUST be configurable: minimum requests for evaluation (default: 3), failure rate threshold (default: 0.6), open timeout (default: 30s), max probe requests in half-open (default: 1), and sliding window interval (default: 60s). See [ADR-0007](adr/0007-circuit-breaker-for-target-unavailability.md).
@@ -184,9 +187,9 @@ The following ordering modes MUST be supported via separate Dispatcher implement
 | FR-7     | Planned | Error classification (`ErrNonRetryable` type) |
 | NFR-1    | Planned |       |
 | NFR-2    | Planned |       |
-| NFR-3    | Planned | NFR-3.3 updated: degraded mode from both broker and target unavailability |
+| NFR-3    | Planned | NFR-3.1 Prometheus metrics, NFR-3.2 slog logging, NFR-3.3 degraded mode probes |
 | NFR-4    | Planned |       |
-| NFR-5    | Planned | NFR-5.6 added for circuit breaker configuration |
+| NFR-5    | Planned | NFR-5.6 CB config, NFR-5.7 per-component config structs, NFR-5.8 functional options pattern |
 | NFR-6    | Planned | Restructured with error classification (NFR-6.1–6.5) |
 | NFR-7    | Planned |       |
 | NFR-8    | Planned |       |
