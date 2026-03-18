@@ -787,3 +787,429 @@ func TestPerPartitionInFlight_PreventsDoubleDispatch(t *testing.T) {
 		t.Fatalf("Close failed: %v", err)
 	}
 }
+
+// --- Gap Tests: Circuit Breaker Full Lifecycle (Scenario 13) ---
+
+func TestCircuitBreaker_FullLifecycle_OpenHalfOpenClosed(t *testing.T) {
+	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
+	shouldFail := atomic.Bool{}
+	shouldFail.Store(true)
+
+	processor := func(_ context.Context, _ []consumer.Message) error {
+		if shouldFail.Load() {
+			return errors.New("target down")
+		}
+		return nil
+	}
+
+	cfg := testConfig()
+	cfg.BatchSize = 1
+	cfg.MaxRetries = 0
+	cfg.CBMinRequests = 3
+	cfg.CBFailureThreshold = 0.6
+	cfg.CBOpenTimeout = 300 * time.Millisecond
+	cfg.CBInterval = 10 * time.Second
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	d.Start(ctx)
+
+	// Phase 1: Trip the circuit breaker with 3 failures.
+	for i := range 3 {
+		_ = d.Send(ctx, int32(i), makeMessages(int32(i), 0, 1))
+	}
+
+	waitForState(t, d, circuit.Open, 5*time.Second)
+
+	// Phase 2: Wait for HalfOpen (after CBOpenTimeout = 300ms).
+	waitForState(t, d, circuit.HalfOpen, 2*time.Second)
+
+	// Phase 3: Make the target succeed so the probe passes.
+	shouldFail.Store(false)
+
+	// Send a probe batch.
+	_ = d.Send(ctx, 10, makeMessages(10, 0, 1))
+
+	waitForState(t, d, circuit.Closed, 5*time.Second)
+
+	cancel()
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer closeCancel()
+	_ = d.Close(closeCtx)
+}
+
+func TestCircuitBreaker_HeldBatchNotDLQd_RetriedOnRecovery(t *testing.T) {
+	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
+	dlq := &mockDLQProducer{}
+	shouldFail := atomic.Bool{}
+	shouldFail.Store(true)
+	var successCount atomic.Int32
+
+	processor := func(_ context.Context, _ []consumer.Message) error {
+		if shouldFail.Load() {
+			return errors.New("target down")
+		}
+		successCount.Add(1)
+		return nil
+	}
+
+	cfg := testConfig()
+	cfg.BatchSize = 1
+	cfg.WorkerCount = 1
+	cfg.MaxRetries = 0
+	cfg.CBMinRequests = 2
+	cfg.CBFailureThreshold = 0.5
+	cfg.CBOpenTimeout = 300 * time.Millisecond
+	cfg.CBInterval = 10 * time.Second
+	d, err := NewUnorderedDispatcher(cfg, processor, coord,
+		WithLogger(silentLogger()),
+		WithDLQProducer(dlq),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	d.Start(ctx)
+
+	// Trip the circuit with 2 failures.
+	_ = d.Send(ctx, 0, makeMessages(0, 0, 1))
+	_ = d.Send(ctx, 1, makeMessages(1, 0, 1))
+
+	waitForState(t, d, circuit.Open, 5*time.Second)
+
+	// Send a batch that should be HELD because circuit is open.
+	_ = d.Send(ctx, 2, makeMessages(2, 0, 1))
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make the target succeed and wait for recovery.
+	shouldFail.Store(false)
+
+	waitForState(t, d, circuit.Closed, 5*time.Second)
+
+	time.Sleep(500 * time.Millisecond)
+
+	if successCount.Load() < 1 {
+		t.Fatalf("expected at least 1 successful processing after recovery, got %d", successCount.Load())
+	}
+
+	cancel()
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer closeCancel()
+	_ = d.Close(closeCtx)
+}
+
+func TestNonRetryableError_DoesNotTripCircuitBreaker(t *testing.T) {
+	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
+	dlq := &mockDLQProducer{}
+
+	processor := func(_ context.Context, _ []consumer.Message) error {
+		return &consumer.ErrNonRetryable{Err: errors.New("bad data")}
+	}
+
+	cfg := testConfig()
+	cfg.BatchSize = 1
+	cfg.MaxRetries = 0
+	cfg.CBMinRequests = 3
+	cfg.CBFailureThreshold = 0.6
+	cfg.CBInterval = 10 * time.Second
+	d, err := NewUnorderedDispatcher(cfg, processor, coord,
+		WithLogger(silentLogger()),
+		WithDLQProducer(dlq),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	d.Start(ctx)
+
+	// Send many non-retryable batches — circuit should NOT open.
+	for i := range 10 {
+		_ = d.Send(ctx, int32(i), makeMessages(int32(i), 0, 1))
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	if dlq.callCount() != 10 {
+		t.Fatalf("expected 10 DLQ calls, got %d", dlq.callCount())
+	}
+
+	// Circuit should still be closed.
+	select {
+	case state := <-d.CircuitStateChanged():
+		t.Fatalf("circuit should not have changed state, got %v", state)
+	default:
+		// Good — no state change.
+	}
+
+	if err := d.Close(ctx); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+}
+
+// --- Gap Tests: Worker Panic Isolation (Scenario 11) ---
+
+func TestWorkerPanic_OffsetNotCommitted_OtherWorkersSucceed(t *testing.T) {
+	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
+	var callCount atomic.Int32
+
+	processor := func(_ context.Context, _ []consumer.Message) error {
+		call := callCount.Add(1)
+		if call == 1 {
+			panic("test panic")
+		}
+		return nil
+	}
+
+	cfg := testConfig()
+	cfg.BatchSize = 1
+	cfg.WorkerCount = 2
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	d.Start(ctx)
+
+	// Send two batches on different partitions.
+	_ = d.Send(ctx, 0, makeMessages(0, 100, 1))
+	_ = d.Send(ctx, 1, makeMessages(1, 200, 1))
+
+	time.Sleep(500 * time.Millisecond)
+
+	offsets := coord.Committable()
+
+	// At least one partition should be committable (the one that didn't panic).
+	if len(offsets) == 0 {
+		t.Fatal("expected at least one partition to be committable after panic isolation")
+	}
+
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer closeCancel()
+	_ = d.Close(closeCtx)
+}
+
+// --- Gap Tests: Retry Does Not Call BatchComplete (Scenario 04) ---
+
+func TestRetry_OffsetNotCommittedDuringRetries(t *testing.T) {
+	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
+	retryBarrier := make(chan struct{})
+	var attempts atomic.Int32
+
+	processor := func(_ context.Context, _ []consumer.Message) error {
+		attempt := attempts.Add(1)
+		if attempt == 1 {
+			return errors.New("transient error")
+		}
+		<-retryBarrier
+		return nil
+	}
+
+	cfg := testConfig()
+	cfg.BatchSize = 1
+	cfg.MaxRetries = 2
+	cfg.CBMinRequests = 100 // High so CB doesn't trip.
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	d.Start(ctx)
+
+	if err := d.Send(ctx, 0, makeMessages(0, 50, 1)); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	// Wait for the first failure and retry to start.
+	time.Sleep(500 * time.Millisecond)
+
+	// During retries, Committable should NOT include partition 0.
+	offsets := coord.Committable()
+	if _, ok := offsets[0]; ok {
+		t.Fatal("partition 0 should NOT be committable during retries")
+	}
+
+	close(retryBarrier)
+	time.Sleep(300 * time.Millisecond)
+
+	offsets = coord.Committable()
+	if offsets[0] != 51 {
+		t.Fatalf("expected committable offset 51 after retry success, got %d", offsets[0])
+	}
+
+	if err := d.Close(ctx); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+}
+
+// --- Gap Tests: Committable During Backpressure (Scenario 02, 10) ---
+
+func TestCommittable_WorksDuringBackpressure(t *testing.T) {
+	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
+	processing := make(chan struct{})
+
+	processor := func(_ context.Context, _ []consumer.Message) error {
+		<-processing
+		return nil
+	}
+
+	cfg := testConfig()
+	cfg.BatchSize = 1
+	cfg.ChannelCap = 1
+	cfg.WorkerCount = 1
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	d.Start(ctx)
+
+	_ = d.Send(ctx, 0, makeMessages(0, 0, 1))
+	time.Sleep(50 * time.Millisecond)
+	_ = d.Send(ctx, 1, makeMessages(1, 0, 1))
+
+	// System at capacity. Committable should still work.
+	offsets := coord.Committable()
+	if len(offsets) != 0 {
+		t.Fatalf("expected 0 committable during backpressure, got %d", len(offsets))
+	}
+
+	close(processing)
+	time.Sleep(300 * time.Millisecond)
+
+	offsets = coord.Committable()
+	if len(offsets) != 2 {
+		t.Fatalf("expected 2 committable after drain, got %d", len(offsets))
+	}
+
+	cancel()
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer closeCancel()
+	_ = d.Close(closeCtx)
+}
+
+// --- Gap Tests: OnPartitionsAssigned (Scenario 09) ---
+
+func TestOnPartitionsAssigned_NewPartitionAcceptsSend(t *testing.T) {
+	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
+	var processed atomic.Int32
+
+	processor := func(_ context.Context, batch []consumer.Message) error {
+		processed.Add(int32(len(batch)))
+		return nil
+	}
+
+	cfg := testConfig()
+	cfg.BatchSize = 1
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	d.Start(ctx)
+
+	d.OnPartitionsAssigned([]Partition{{Topic: "test-topic", Partition: 5}})
+
+	if err := d.Send(ctx, 5, makeMessages(5, 0, 1)); err != nil {
+		t.Fatalf("Send to assigned partition failed: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if processed.Load() != 1 {
+		t.Fatalf("expected 1 processed message, got %d", processed.Load())
+	}
+
+	if err := d.Close(ctx); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+}
+
+func TestSendWithoutPriorAssignment_CreatesBuffer(t *testing.T) {
+	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
+	var processed atomic.Int32
+
+	processor := func(_ context.Context, batch []consumer.Message) error {
+		processed.Add(int32(len(batch)))
+		return nil
+	}
+
+	cfg := testConfig()
+	cfg.BatchSize = 1
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	d.Start(ctx)
+
+	if err := d.Send(ctx, 7, makeMessages(7, 0, 1)); err != nil {
+		t.Fatalf("Send without prior assignment failed: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if processed.Load() != 1 {
+		t.Fatalf("expected 1 processed message, got %d", processed.Load())
+	}
+
+	if err := d.Close(ctx); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+}
+
+// --- Gap Tests: Backoff Timing (Scenario 04) ---
+
+func TestBackoff_ExponentialIncrease(t *testing.T) {
+	d0 := backoff(0)
+	d1 := backoff(1)
+	d2 := backoff(2)
+
+	if d0 >= d1 {
+		t.Fatalf("backoff should increase: d0=%v >= d1=%v", d0, d1)
+	}
+	if d1 >= d2 {
+		t.Fatalf("backoff should increase: d1=%v >= d2=%v", d1, d2)
+	}
+
+	// Verify cap at retryMaxDelay.
+	dMax := backoff(100)
+	maxWithJitter := retryMaxDelay + time.Duration(float64(retryMaxDelay)*jitterFactor)
+	if dMax > maxWithJitter {
+		t.Fatalf("backoff should be capped at ~%v, got %v", maxWithJitter, dMax)
+	}
+}
+
+// --- Helper ---
+
+func waitForState(t *testing.T, d *UnorderedDispatcher, expected circuit.State, timeout time.Duration) {
+	t.Helper()
+	timer := time.After(timeout)
+	for {
+		select {
+		case state := <-d.CircuitStateChanged():
+			if state == expected {
+				return
+			}
+		case <-timer:
+			t.Fatalf("timeout waiting for circuit state %v", expected)
+		}
+	}
+}

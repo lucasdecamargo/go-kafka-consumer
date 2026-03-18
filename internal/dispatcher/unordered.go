@@ -479,34 +479,37 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 		}
 
 		// Execute through the circuit breaker.
-		_, cbErr := d.cb.Execute(func() (any, error) {
+		// Non-retryable errors are returned as the result value (not the
+		// error value) so gobreaker does not count them as failures.
+		result, cbErr := d.cb.Execute(func() (any, error) {
 			err := d.processor(ctx, b.messages)
 			if err != nil {
-				// Non-retryable errors must not be reported to the CB.
 				if consumer.IsNonRetryable(err) {
-					return nil, &nonRetryableWrapper{err: err}
+					// Return as result, not error — CB sees success.
+					return &nonRetryableWrapper{err: err}, nil
 				}
+				// Transient error — CB counts as failure.
 				return nil, err
 			}
 			return nil, nil
 		})
 
-		if cbErr == nil {
-			// Success.
-			d.coordinator.BatchComplete(b.partition, b.maxOffset)
-			d.onBatchDone(b.partition, ctx)
-			return
-		}
-
-		// Check if it was a non-retryable error (wrapped to bypass CB).
-		var nrw *nonRetryableWrapper
-		if errors.As(cbErr, &nrw) {
+		// Check if a non-retryable error was returned via the result.
+		// Non-retryable errors bypass the CB (returned as result, not error).
+		if nrw, ok := result.(*nonRetryableWrapper); ok {
 			d.logger.Warn("non-retryable error, routing to DLQ",
 				slog.Int("partition", int(b.partition)),
 				slog.Int64("max_offset", b.maxOffset),
 				slog.String("error", nrw.err.Error()),
 			)
 			d.sendToDLQ(ctx, b, nrw.err)
+			d.coordinator.BatchComplete(b.partition, b.maxOffset)
+			d.onBatchDone(b.partition, ctx)
+			return
+		}
+
+		if cbErr == nil {
+			// Success — processor returned nil, no CB error.
 			d.coordinator.BatchComplete(b.partition, b.maxOffset)
 			d.onBatchDone(b.partition, ctx)
 			return
