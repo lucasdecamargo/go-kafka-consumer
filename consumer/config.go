@@ -83,6 +83,11 @@ type Config struct {
 	// CBInterval is the circuit breaker's sliding window duration.
 	// Default: 60s.
 	CBInterval time.Duration
+
+	// Security holds TLS and SASL authentication settings for Kafka
+	// broker connections. The zero value uses plaintext without
+	// authentication (suitable for development only). See NFR-7.1.
+	Security SecurityConfig
 }
 
 // DefaultConfig returns a Config with sensible production defaults.
@@ -161,6 +166,9 @@ func (c *Config) Validate() error {
 	}
 	if c.CBInterval <= 0 {
 		return errors.New("config: circuit breaker interval must be positive")
+	}
+	if err := c.Security.Validate(); err != nil {
+		return err
 	}
 	return nil
 }
