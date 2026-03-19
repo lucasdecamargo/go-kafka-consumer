@@ -118,7 +118,7 @@ func newMockDispatcher() *mockDispatcher {
 	}
 }
 
-func (m *mockDispatcher) Start(_ context.Context) {}
+func (m *mockDispatcher) Start(_ context.Context, _ context.CancelFunc) {}
 
 func (m *mockDispatcher) Send(ctx context.Context, partition int32, msgs []types.Message) error {
 	m.mu.Lock()

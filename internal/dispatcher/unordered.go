@@ -159,8 +159,12 @@ func NewUnorderedDispatcher(
 
 // Start launches the worker pool. Must be called before Send(). The context
 // is used for worker lifecycle — canceling it triggers graceful shutdown.
-func (d *UnorderedDispatcher) Start(ctx context.Context) {
-	ctx, d.cancelRoot = context.WithCancel(ctx)
+//
+// The shutdown function is stored as cancelRoot for panic recovery. When
+// a worker panics, it calls shutdown to cancel the shared context,
+// propagating shutdown to the poll loop and all other components.
+func (d *UnorderedDispatcher) Start(ctx context.Context, shutdown context.CancelFunc) {
+	d.cancelRoot = shutdown
 
 	for range d.cfg.WorkerCount {
 		d.wg.Add(1)

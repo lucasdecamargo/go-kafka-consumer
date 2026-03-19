@@ -157,7 +157,13 @@ func (c *Consumer) Run(ctx context.Context) error {
 	fwd.target = pl
 
 	// 8. Start dispatcher workers.
-	disp.Start(ctx)
+	// Create a cancelable context for the entire run. Components that
+	// detect fatal conditions (e.g., worker panics) call runCancel,
+	// which propagates shutdown to the poll loop and all workers.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+
+	disp.Start(runCtx, runCancel)
 
 	// 9. Start HTTP health/metrics server (if configured).
 	if c.cfg.HealthAddr != "" {
@@ -187,10 +193,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 	logger.Info("consumer started — all components assembled")
 
-	// 10. Run the poll loop (blocks until ctx canceled).
+	// 10. Run the poll loop (blocks until runCtx canceled).
 	// PollLoop.Run handles graceful shutdown: drain dispatcher, final
 	// commit, close Kafka consumer.
-	return pl.Run(ctx)
+	return pl.Run(runCtx)
 }
 
 // createDispatcher builds the appropriate Dispatcher implementation based

@@ -34,8 +34,13 @@ type Dispatcher interface {
 	// exactly once before Send(). The context controls worker lifecycle —
 	// canceling it triggers graceful shutdown of all workers.
 	//
+	// The shutdown function is called by the Dispatcher when a fatal
+	// condition is detected (e.g., worker panic). It cancels the shared
+	// context that the poll loop also watches, propagating shutdown to
+	// the entire consumer pipeline.
+	//
 	// Called by: Consumer.Run(), during startup.
-	Start(ctx context.Context)
+	Start(ctx context.Context, shutdown context.CancelFunc)
 
 	// Send delivers a group of messages from a single partition to the
 	// Dispatcher for batch assembly and processing. Returns an error when

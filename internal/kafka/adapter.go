@@ -161,8 +161,8 @@ func (a *Adapter) handleEvent(ev kafka.Event, msgs *[]types.Message) error {
 }
 
 // CommitOffsets commits the given partition offsets synchronously.
-// Offsets are committed as offset+1 (Kafka convention: committed offset
-// is the next offset to be fetched).
+// The offsets map values must already be next-to-fetch (i.e., the
+// coordinator returns maxOffset+1). No additional +1 is applied here.
 func (a *Adapter) CommitOffsets(offsets map[int32]int64) error {
 	tps := make([]kafka.TopicPartition, 0, len(offsets))
 	for partition, offset := range offsets {
@@ -171,7 +171,7 @@ func (a *Adapter) CommitOffsets(offsets map[int32]int64) error {
 		tps = append(tps, kafka.TopicPartition{
 			Topic:     &topic,
 			Partition: partition,
-			Offset:    kafka.Offset(offset + 1), // Kafka commits next-to-fetch.
+			Offset:    kafka.Offset(offset), // Already next-to-fetch from coordinator.
 		})
 	}
 

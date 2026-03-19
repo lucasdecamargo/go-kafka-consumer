@@ -91,7 +91,7 @@ func TestHappyPath_SendProcessComplete(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Send enough messages to trigger a batch (BatchSize=3).
 	msgs := makeMessages(0, 0, 3)
@@ -135,7 +135,7 @@ func TestLingerTimer_FlushesPartialBatch(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Send fewer messages than BatchSize — should trigger linger flush.
 	msgs := makeMessages(0, 0, 2)
@@ -180,7 +180,7 @@ func TestBackpressure_SendReturnsError(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// First send — fills the channel. Use different partitions so they don't
 	// block on in-flight tracking.
@@ -223,7 +223,7 @@ func TestReadyChannel_SignaledAfterBatchComplete(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 1)); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -264,7 +264,7 @@ func TestTransientError_RetriesAndSucceeds(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 1)); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -309,7 +309,7 @@ func TestNonRetryableError_DirectToDLQ(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 1)); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -361,7 +361,7 @@ func TestRetriesExhausted_RoutesToDLQ(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 1)); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -406,7 +406,7 @@ func TestNoDLQProducer_DropsFailedBatch(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 1)); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -440,8 +440,9 @@ func TestWorkerPanic_TriggersGracefulShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
-	d.Start(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.Start(ctx, cancel)
 
 	sendCtx, sendCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer sendCancel()
@@ -483,7 +484,7 @@ func TestCircuitBreaker_OpensOnSustainedFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Send enough batches to trip the circuit breaker (3 failures).
 	for i := range 3 {
@@ -534,7 +535,7 @@ func TestMultiplePartitions_IndependentBatching(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Send to two partitions.
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 2)); err != nil {
@@ -582,7 +583,7 @@ func TestGracefulShutdown_WorkersDrain(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 1)); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -619,7 +620,7 @@ func TestGracefulShutdown_DeadlineExceeded(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 1)); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -654,7 +655,7 @@ func TestOnPartitionsRevoked_ClearsBuffer(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Send messages but not enough for a batch.
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 3)); err != nil {
@@ -705,8 +706,9 @@ func TestSendAfterClose_ReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
-	d.Start(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.Start(ctx, cancel)
 
 	closeCtx, closeCancel := context.WithTimeout(ctx, 1*time.Second)
 	defer closeCancel()
@@ -743,7 +745,7 @@ func TestPerPartitionInFlight_PreventsDoubleDispatch(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Send first batch for partition 0.
 	if err := d.Send(ctx, 0, makeMessages(0, 0, 1)); err != nil {
@@ -816,7 +818,7 @@ func TestCircuitBreaker_FullLifecycle_OpenHalfOpenClosed(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Phase 1: Trip the circuit breaker with 3 failures.
 	for i := range 3 {
@@ -875,7 +877,7 @@ func TestCircuitBreaker_HeldBatchNotDLQd_RetriedOnRecovery(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Trip the circuit with 2 failures.
 	_ = d.Send(ctx, 0, makeMessages(0, 0, 1))
@@ -929,7 +931,7 @@ func TestNonRetryableError_DoesNotTripCircuitBreaker(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	// Send many non-retryable batches — circuit should NOT open.
 	for i := range 10 {
@@ -977,8 +979,9 @@ func TestWorkerPanic_OffsetNotCommitted_OtherWorkersSucceed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
-	d.Start(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d.Start(ctx, cancel)
 
 	// Send two batches on different partitions.
 	_ = d.Send(ctx, 0, makeMessages(0, 100, 1))
@@ -1025,7 +1028,7 @@ func TestRetry_OffsetNotCommittedDuringRetries(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 0, makeMessages(0, 50, 1)); err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -1075,7 +1078,7 @@ func TestCommittable_WorksDuringBackpressure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	_ = d.Send(ctx, 0, makeMessages(0, 0, 1))
 	time.Sleep(50 * time.Millisecond)
@@ -1121,7 +1124,7 @@ func TestOnPartitionsAssigned_NewPartitionAcceptsSend(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	d.OnPartitionsAssigned([]Partition{{Topic: "test-topic", Partition: 5}})
 
@@ -1158,7 +1161,7 @@ func TestSendWithoutPriorAssignment_CreatesBuffer(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	d.Start(ctx)
+	d.Start(ctx, cancel)
 
 	if err := d.Send(ctx, 7, makeMessages(7, 0, 1)); err != nil {
 		t.Fatalf("Send without prior assignment failed: %v", err)
