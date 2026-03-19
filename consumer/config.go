@@ -84,6 +84,12 @@ type Config struct {
 	// Default: 60s.
 	CBInterval time.Duration
 
+	// HealthAddr is the TCP address for the health and metrics HTTP server
+	// (e.g., ":8080", "0.0.0.0:9090"). If empty, the server is not started.
+	// Exposes /healthz, /readyz, and /metrics endpoints.
+	// Default: ":8080".
+	HealthAddr string
+
 	// Security holds TLS and SASL authentication settings for Kafka
 	// broker connections. The zero value uses plaintext without
 	// authentication (suitable for development only). See NFR-7.1.
@@ -109,6 +115,7 @@ func DefaultConfig() Config {
 		CBOpenTimeout:          30 * time.Second,
 		CBMaxRequests:          1,
 		CBInterval:             60 * time.Second,
+		HealthAddr:             ":8080",
 	}
 }
 

@@ -36,11 +36,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/kafka"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/offset"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/pollloop"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/server"
 )
 
 // Consumer is the top-level entry point for the Kafka consumer framework.
@@ -155,9 +159,35 @@ func (c *Consumer) Run(ctx context.Context) error {
 	// 8. Start dispatcher workers.
 	disp.Start(ctx)
 
+	// 9. Start HTTP health/metrics server (if configured).
+	if c.cfg.HealthAddr != "" {
+		gatherer := c.resolveGatherer(reg)
+		srv := server.New(
+			server.Config{Addr: c.cfg.HealthAddr},
+			health,
+			gatherer,
+			logger.With(slog.String("component", "health-server")),
+		)
+
+		go func() {
+			if err := srv.ListenAndServe(); err != nil {
+				logger.Error("health server error", slog.String("error", err.Error()))
+			}
+		}()
+
+		// Shut down the HTTP server when the poll loop exits.
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				logger.Warn("health server shutdown error", slog.String("error", err.Error()))
+			}
+		}()
+	}
+
 	logger.Info("consumer started — all components assembled")
 
-	// 9. Run the poll loop (blocks until ctx canceled).
+	// 10. Run the poll loop (blocks until ctx canceled).
 	// PollLoop.Run handles graceful shutdown: drain dispatcher, final
 	// commit, close Kafka consumer.
 	return pl.Run(ctx)
@@ -237,6 +267,17 @@ func (c *Consumer) mapKafkaConfig() kafka.AdapterConfig {
 	}
 
 	return cfg
+}
+
+// resolveGatherer returns a prometheus.Gatherer from the configured
+// registerer. If the registerer also implements Gatherer (as
+// prometheus.Registry does), it is used directly. Otherwise, falls back
+// to the default gatherer.
+func (c *Consumer) resolveGatherer(reg prometheus.Registerer) prometheus.Gatherer {
+	if g, ok := reg.(prometheus.Gatherer); ok {
+		return g
+	}
+	return prometheus.DefaultGatherer
 }
 
 // rebalanceForwarder breaks the circular dependency between the Kafka
