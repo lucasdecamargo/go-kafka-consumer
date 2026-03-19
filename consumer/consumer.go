@@ -245,6 +245,7 @@ func (c *Consumer) createDispatcher(
 
 	var dispOpts []dispatcher.UnorderedOption
 	dispOpts = append(dispOpts, dispatcher.WithLogger(dispLogger))
+	dispOpts = append(dispOpts, dispatcher.WithMetrics(c.opts.registerer))
 	if dlq != nil {
 		dispOpts = append(dispOpts, dispatcher.WithDLQProducer(dlq))
 	}

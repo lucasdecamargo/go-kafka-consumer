@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/offset"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
@@ -84,7 +86,7 @@ func TestHappyPath_SendProcessComplete(t *testing.T) {
 	}
 
 	cfg := testConfig()
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +130,7 @@ func TestLingerTimer_FlushesPartialBatch(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.LingerTime = 50 * time.Millisecond
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +175,7 @@ func TestBackpressure_SendReturnsError(t *testing.T) {
 	cfg.ChannelCap = 1
 	cfg.WorkerCount = 1
 	cfg.BatchSize = 1
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +218,7 @@ func TestReadyChannel_SignaledAfterBatchComplete(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.BatchSize = 1
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +259,7 @@ func TestTransientError_RetriesAndSucceeds(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchSize = 1
 	cfg.MaxRetries = 3
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,6 +303,7 @@ func TestNonRetryableError_DirectToDLQ(t *testing.T) {
 	cfg.BatchSize = 1
 	d, err := NewUnorderedDispatcher(cfg, processor, coord,
 		WithLogger(silentLogger()),
+		WithMetrics(prometheus.NewRegistry()),
 		WithDLQProducer(dlq),
 	)
 	if err != nil {
@@ -353,6 +356,7 @@ func TestRetriesExhausted_RoutesToDLQ(t *testing.T) {
 	cfg.CBMinRequests = 100
 	d, err := NewUnorderedDispatcher(cfg, processor, coord,
 		WithLogger(silentLogger()),
+		WithMetrics(prometheus.NewRegistry()),
 		WithDLQProducer(dlq),
 	)
 	if err != nil {
@@ -399,7 +403,7 @@ func TestNoDLQProducer_DropsFailedBatch(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchSize = 1
 	// No DLQ producer — should log and drop.
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +439,7 @@ func TestWorkerPanic_TriggersGracefulShutdown(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchSize = 1
 	cfg.WorkerCount = 1
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +481,7 @@ func TestCircuitBreaker_OpensOnSustainedFailure(t *testing.T) {
 	cfg.CBFailureThreshold = 0.6
 	cfg.CBOpenTimeout = 500 * time.Millisecond
 	cfg.CBInterval = 10 * time.Second
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +532,7 @@ func TestMultiplePartitions_IndependentBatching(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.BatchSize = 2
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +580,7 @@ func TestGracefulShutdown_WorkersDrain(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.BatchSize = 1
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +617,7 @@ func TestGracefulShutdown_DeadlineExceeded(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchSize = 1
 	cfg.WorkerCount = 1
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +652,7 @@ func TestOnPartitionsRevoked_ClearsBuffer(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.BatchSize = 10 // Large batch so messages stay in buffer.
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +686,7 @@ func TestOnPartitionsRevoked_ClearsBuffer(t *testing.T) {
 
 func TestConstructor_NilProcessor_ReturnsError(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
-	_, err := NewUnorderedDispatcher(testConfig(), nil, coord)
+	_, err := NewUnorderedDispatcher(testConfig(), nil, coord, WithMetrics(prometheus.NewRegistry()))
 	if err == nil {
 		t.Fatal("expected error for nil processor")
 	}
@@ -690,7 +694,7 @@ func TestConstructor_NilProcessor_ReturnsError(t *testing.T) {
 
 func TestConstructor_NilCoordinator_ReturnsError(t *testing.T) {
 	processor := func(_ context.Context, _ []types.Message) error { return nil }
-	_, err := NewUnorderedDispatcher(testConfig(), processor, nil)
+	_, err := NewUnorderedDispatcher(testConfig(), processor, nil, WithMetrics(prometheus.NewRegistry()))
 	if err == nil {
 		t.Fatal("expected error for nil coordinator")
 	}
@@ -701,7 +705,7 @@ func TestSendAfterClose_ReturnsError(t *testing.T) {
 	processor := func(_ context.Context, _ []types.Message) error { return nil }
 
 	cfg := testConfig()
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -738,7 +742,7 @@ func TestPerPartitionInFlight_PreventsDoubleDispatch(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchSize = 1
 	cfg.WorkerCount = 2
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +815,7 @@ func TestCircuitBreaker_FullLifecycle_OpenHalfOpenClosed(t *testing.T) {
 	cfg.CBFailureThreshold = 0.6
 	cfg.CBOpenTimeout = 300 * time.Millisecond
 	cfg.CBInterval = 10 * time.Second
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -869,6 +873,7 @@ func TestCircuitBreaker_HeldBatchNotDLQd_RetriedOnRecovery(t *testing.T) {
 	cfg.CBInterval = 10 * time.Second
 	d, err := NewUnorderedDispatcher(cfg, processor, coord,
 		WithLogger(silentLogger()),
+		WithMetrics(prometheus.NewRegistry()),
 		WithDLQProducer(dlq),
 	)
 	if err != nil {
@@ -923,6 +928,7 @@ func TestNonRetryableError_DoesNotTripCircuitBreaker(t *testing.T) {
 	cfg.CBInterval = 10 * time.Second
 	d, err := NewUnorderedDispatcher(cfg, processor, coord,
 		WithLogger(silentLogger()),
+		WithMetrics(prometheus.NewRegistry()),
 		WithDLQProducer(dlq),
 	)
 	if err != nil {
@@ -974,7 +980,7 @@ func TestWorkerPanic_OffsetNotCommitted_OtherWorkersSucceed(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchSize = 1
 	cfg.WorkerCount = 2
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1021,7 +1027,7 @@ func TestRetry_OffsetNotCommittedDuringRetries(t *testing.T) {
 	cfg.BatchSize = 1
 	cfg.MaxRetries = 2
 	cfg.CBMinRequests = 100 // High so CB doesn't trip.
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1071,7 +1077,7 @@ func TestCommittable_WorksDuringBackpressure(t *testing.T) {
 	cfg.BatchSize = 1
 	cfg.ChannelCap = 1
 	cfg.WorkerCount = 1
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1117,7 +1123,7 @@ func TestOnPartitionsAssigned_NewPartitionAcceptsSend(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.BatchSize = 1
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1154,7 +1160,7 @@ func TestSendWithoutPriorAssignment_CreatesBuffer(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.BatchSize = 1
-	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
+	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()), WithMetrics(prometheus.NewRegistry()))
 	if err != nil {
 		t.Fatal(err)
 	}

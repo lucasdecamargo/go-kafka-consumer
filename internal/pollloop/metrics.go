@@ -1,7 +1,7 @@
 package pollloop
 
-// Metric name constants for the poll loop. Provisional prefix: kafka_consumer_.
-// Final naming convention to be finalized in Phase 5.
+// Metric name constants for the poll loop. All metrics follow the naming
+// convention: kafka_consumer_poll_loop_<metric>_<unit>.
 const (
 	MetricPollLoopMessagesTotal       = "kafka_consumer_poll_loop_messages_total"
 	MetricPollLoopPollErrorsTotal     = "kafka_consumer_poll_loop_poll_errors_total"
