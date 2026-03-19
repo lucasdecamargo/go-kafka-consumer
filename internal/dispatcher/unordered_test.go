@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/offset"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
 
 // --- Test Helpers ---
@@ -36,10 +36,10 @@ func testConfig() Config {
 	}
 }
 
-func makeMessages(partition int32, startOffset int64, count int) []consumer.Message {
-	msgs := make([]consumer.Message, count)
+func makeMessages(partition int32, startOffset int64, count int) []types.Message {
+	msgs := make([]types.Message, count)
 	for i := range count {
-		msgs[i] = consumer.Message{
+		msgs[i] = types.Message{
 			Topic:     "test-topic",
 			Partition: partition,
 			Offset:    startOffset + int64(i),
@@ -53,12 +53,12 @@ func makeMessages(partition int32, startOffset int64, count int) []consumer.Mess
 // mockDLQProducer records DLQ produce calls.
 type mockDLQProducer struct {
 	mu      sync.Mutex
-	batches [][]consumer.Message
+	batches [][]types.Message
 	reasons []error
 	err     error // if set, Produce returns this error
 }
 
-func (m *mockDLQProducer) Produce(_ context.Context, msgs []consumer.Message, reason error) error {
+func (m *mockDLQProducer) Produce(_ context.Context, msgs []types.Message, reason error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.batches = append(m.batches, msgs)
@@ -78,7 +78,7 @@ func TestHappyPath_SendProcessComplete(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	var processed atomic.Int32
 
-	processor := func(_ context.Context, batch []consumer.Message) error {
+	processor := func(_ context.Context, batch []types.Message) error {
 		processed.Add(int32(len(batch)))
 		return nil
 	}
@@ -121,7 +121,7 @@ func TestLingerTimer_FlushesPartialBatch(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	var processed atomic.Int32
 
-	processor := func(_ context.Context, batch []consumer.Message) error {
+	processor := func(_ context.Context, batch []types.Message) error {
 		processed.Add(int32(len(batch)))
 		return nil
 	}
@@ -164,7 +164,7 @@ func TestBackpressure_SendReturnsError(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 
 	// Processor that blocks forever (simulates slow processing).
-	processor := func(ctx context.Context, _ []consumer.Message) error {
+	processor := func(ctx context.Context, _ []types.Message) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}
@@ -210,7 +210,7 @@ func TestBackpressure_SendReturnsError(t *testing.T) {
 func TestReadyChannel_SignaledAfterBatchComplete(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		return nil
 	}
 
@@ -246,7 +246,7 @@ func TestTransientError_RetriesAndSucceeds(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	var attempts atomic.Int32
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		attempt := attempts.Add(1)
 		if attempt <= 2 {
 			return errors.New("transient error")
@@ -292,9 +292,9 @@ func TestNonRetryableError_DirectToDLQ(t *testing.T) {
 	dlq := &mockDLQProducer{}
 	var attempts atomic.Int32
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		attempts.Add(1)
-		return &consumer.ErrNonRetryable{Err: errors.New("bad data")}
+		return &types.ErrNonRetryable{Err: errors.New("bad data")}
 	}
 
 	cfg := testConfig()
@@ -341,7 +341,7 @@ func TestRetriesExhausted_RoutesToDLQ(t *testing.T) {
 	dlq := &mockDLQProducer{}
 	var attempts atomic.Int32
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		attempts.Add(1)
 		return errors.New("always fails")
 	}
@@ -392,8 +392,8 @@ func TestRetriesExhausted_RoutesToDLQ(t *testing.T) {
 func TestNoDLQProducer_DropsFailedBatch(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
-		return &consumer.ErrNonRetryable{Err: errors.New("bad data")}
+	processor := func(_ context.Context, _ []types.Message) error {
+		return &types.ErrNonRetryable{Err: errors.New("bad data")}
 	}
 
 	cfg := testConfig()
@@ -428,7 +428,7 @@ func TestNoDLQProducer_DropsFailedBatch(t *testing.T) {
 func TestWorkerPanic_TriggersGracefulShutdown(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		panic("test panic")
 	}
 
@@ -465,7 +465,7 @@ func TestWorkerPanic_TriggersGracefulShutdown(t *testing.T) {
 func TestCircuitBreaker_OpensOnSustainedFailure(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		return errors.New("target down")
 	}
 
@@ -520,7 +520,7 @@ func TestMultiplePartitions_IndependentBatching(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	var processed atomic.Int32
 
-	processor := func(_ context.Context, batch []consumer.Message) error {
+	processor := func(_ context.Context, batch []types.Message) error {
 		processed.Add(int32(len(batch)))
 		return nil
 	}
@@ -567,7 +567,7 @@ func TestGracefulShutdown_WorkersDrain(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	var processed atomic.Int32
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		time.Sleep(100 * time.Millisecond) // Simulate slow processing.
 		processed.Add(1)
 		return nil
@@ -604,7 +604,7 @@ func TestGracefulShutdown_WorkersDrain(t *testing.T) {
 func TestGracefulShutdown_DeadlineExceeded(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 
-	processor := func(ctx context.Context, _ []consumer.Message) error {
+	processor := func(ctx context.Context, _ []types.Message) error {
 		<-ctx.Done() // Block forever.
 		return ctx.Err()
 	}
@@ -641,7 +641,7 @@ func TestGracefulShutdown_DeadlineExceeded(t *testing.T) {
 func TestOnPartitionsRevoked_ClearsBuffer(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		return nil
 	}
 
@@ -688,7 +688,7 @@ func TestConstructor_NilProcessor_ReturnsError(t *testing.T) {
 }
 
 func TestConstructor_NilCoordinator_ReturnsError(t *testing.T) {
-	processor := func(_ context.Context, _ []consumer.Message) error { return nil }
+	processor := func(_ context.Context, _ []types.Message) error { return nil }
 	_, err := NewUnorderedDispatcher(testConfig(), processor, nil)
 	if err == nil {
 		t.Fatal("expected error for nil coordinator")
@@ -697,7 +697,7 @@ func TestConstructor_NilCoordinator_ReturnsError(t *testing.T) {
 
 func TestSendAfterClose_ReturnsError(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
-	processor := func(_ context.Context, _ []consumer.Message) error { return nil }
+	processor := func(_ context.Context, _ []types.Message) error { return nil }
 
 	cfg := testConfig()
 	d, err := NewUnorderedDispatcher(cfg, processor, coord, WithLogger(silentLogger()))
@@ -724,7 +724,7 @@ func TestPerPartitionInFlight_PreventsDoubleDispatch(t *testing.T) {
 	firstBatchDone := make(chan struct{})
 	var callCount atomic.Int32
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		call := callCount.Add(1)
 		if call == 1 {
 			close(firstBatchStarted)
@@ -795,7 +795,7 @@ func TestCircuitBreaker_FullLifecycle_OpenHalfOpenClosed(t *testing.T) {
 	shouldFail := atomic.Bool{}
 	shouldFail.Store(true)
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		if shouldFail.Load() {
 			return errors.New("target down")
 		}
@@ -849,7 +849,7 @@ func TestCircuitBreaker_HeldBatchNotDLQd_RetriedOnRecovery(t *testing.T) {
 	shouldFail.Store(true)
 	var successCount atomic.Int32
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		if shouldFail.Load() {
 			return errors.New("target down")
 		}
@@ -909,8 +909,8 @@ func TestNonRetryableError_DoesNotTripCircuitBreaker(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	dlq := &mockDLQProducer{}
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
-		return &consumer.ErrNonRetryable{Err: errors.New("bad data")}
+	processor := func(_ context.Context, _ []types.Message) error {
+		return &types.ErrNonRetryable{Err: errors.New("bad data")}
 	}
 
 	cfg := testConfig()
@@ -961,7 +961,7 @@ func TestWorkerPanic_OffsetNotCommitted_OtherWorkersSucceed(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	var callCount atomic.Int32
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		call := callCount.Add(1)
 		if call == 1 {
 			panic("test panic")
@@ -1005,7 +1005,7 @@ func TestRetry_OffsetNotCommittedDuringRetries(t *testing.T) {
 	retryBarrier := make(chan struct{})
 	var attempts atomic.Int32
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		attempt := attempts.Add(1)
 		if attempt == 1 {
 			return errors.New("transient error")
@@ -1059,7 +1059,7 @@ func TestCommittable_WorksDuringBackpressure(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	processing := make(chan struct{})
 
-	processor := func(_ context.Context, _ []consumer.Message) error {
+	processor := func(_ context.Context, _ []types.Message) error {
 		<-processing
 		return nil
 	}
@@ -1107,7 +1107,7 @@ func TestOnPartitionsAssigned_NewPartitionAcceptsSend(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	var processed atomic.Int32
 
-	processor := func(_ context.Context, batch []consumer.Message) error {
+	processor := func(_ context.Context, batch []types.Message) error {
 		processed.Add(int32(len(batch)))
 		return nil
 	}
@@ -1144,7 +1144,7 @@ func TestSendWithoutPriorAssignment_CreatesBuffer(t *testing.T) {
 	coord := offset.NewCoordinator(offset.WithLogger(silentLogger()))
 	var processed atomic.Int32
 
-	processor := func(_ context.Context, batch []consumer.Message) error {
+	processor := func(_ context.Context, batch []types.Message) error {
 		processed.Add(int32(len(batch)))
 		return nil
 	}

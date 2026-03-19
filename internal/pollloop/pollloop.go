@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/offset"
@@ -539,8 +539,8 @@ func (pl *PollLoop) shutdown() error {
 }
 
 // groupByPartition groups a slice of messages by their partition.
-func groupByPartition(msgs []consumer.Message) map[int32][]consumer.Message {
-	grouped := make(map[int32][]consumer.Message)
+func groupByPartition(msgs []types.Message) map[int32][]types.Message {
+	grouped := make(map[int32][]types.Message)
 	for _, msg := range msgs {
 		grouped[msg.Partition] = append(grouped[msg.Partition], msg)
 	}

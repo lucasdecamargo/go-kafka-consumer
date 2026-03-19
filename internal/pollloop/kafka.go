@@ -1,7 +1,7 @@
 package pollloop
 
 import (
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
 )
 
@@ -15,7 +15,7 @@ type KafkaConsumer interface {
 	// Poll retrieves messages from Kafka. Returns nil when no messages
 	// are available (e.g., all partitions paused, low-traffic topic).
 	// The timeout parameter controls how long the call blocks.
-	Poll(timeoutMs int) ([]consumer.Message, error)
+	Poll(timeoutMs int) ([]types.Message, error)
 
 	// CommitOffsets commits the given partition offsets to Kafka
 	// synchronously. Returns an error if the broker is unreachable.

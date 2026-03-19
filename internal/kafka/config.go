@@ -7,12 +7,44 @@ import (
 	"strings"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
-
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
 )
 
-// BuildConsumerConfig translates the framework's consumer.Config into a
-// confluent-kafka-go ConfigMap suitable for creating a Kafka consumer.
+// AdapterConfig holds the Kafka connection and consumer group settings
+// needed by the adapter. This is an internal representation — the public
+// consumer.Config is mapped to this struct by Consumer.Run().
+type AdapterConfig struct {
+	Brokers  []string
+	GroupID  string
+	Topics   []string
+	Security SecurityConfig
+}
+
+// SecurityConfig mirrors the security settings needed by the Kafka
+// adapter. Mapped from consumer.SecurityConfig by Consumer.Run().
+type SecurityConfig struct {
+	Protocol string
+	TLS      *TLSConfig
+	SASL     *SASLConfig
+}
+
+// TLSConfig holds TLS settings for the Kafka connection.
+type TLSConfig struct {
+	CAFile             string
+	CertFile           string
+	KeyFile            string
+	InsecureSkipVerify bool
+}
+
+// SASLConfig holds SASL authentication settings.
+type SASLConfig struct {
+	Mechanism         string
+	Username          string
+	Password          string
+	OAuthBearerConfig string
+}
+
+// BuildConsumerConfig translates AdapterConfig into a confluent-kafka-go
+// ConfigMap suitable for creating a Kafka consumer.
 //
 // The resulting ConfigMap sets:
 //   - bootstrap.servers, group.id
@@ -20,13 +52,13 @@ import (
 //   - partition.assignment.strategy = cooperative-sticky (FR-1.8)
 //   - auto.offset.reset = earliest (at-least-once semantics, NFR-2.1)
 //   - Security protocol, TLS, and SASL settings (NFR-7.1)
-func BuildConsumerConfig(cfg consumer.Config) (*kafka.ConfigMap, error) {
+func BuildConsumerConfig(cfg AdapterConfig) (*kafka.ConfigMap, error) {
 	m := &kafka.ConfigMap{
-		"bootstrap.servers":             strings.Join(cfg.Brokers, ","),
-		"group.id":                      cfg.GroupID,
-		"enable.auto.commit":            false,
-		"partition.assignment.strategy":  "cooperative-sticky",
-		"auto.offset.reset":             "earliest",
+		"bootstrap.servers":               strings.Join(cfg.Brokers, ","),
+		"group.id":                        cfg.GroupID,
+		"enable.auto.commit":              false,
+		"partition.assignment.strategy":    "cooperative-sticky",
+		"auto.offset.reset":               "earliest",
 		"go.application.rebalance.enable": true,
 	}
 
@@ -39,13 +71,13 @@ func BuildConsumerConfig(cfg consumer.Config) (*kafka.ConfigMap, error) {
 
 // applySecurity maps SecurityConfig fields to librdkafka configuration
 // properties on the given ConfigMap.
-func applySecurity(m *kafka.ConfigMap, sec consumer.SecurityConfig) error {
+func applySecurity(m *kafka.ConfigMap, sec SecurityConfig) error {
 	protocol := sec.Protocol
 	if protocol == "" {
-		protocol = consumer.ProtocolPlaintext
+		protocol = "plaintext"
 	}
 
-	if err := m.SetKey("security.protocol", string(protocol)); err != nil {
+	if err := m.SetKey("security.protocol", protocol); err != nil {
 		return fmt.Errorf("set security.protocol: %w", err)
 	}
 
@@ -75,7 +107,7 @@ func applySecurity(m *kafka.ConfigMap, sec consumer.SecurityConfig) error {
 
 	// SASL settings.
 	if sec.SASL != nil {
-		if err := m.SetKey("sasl.mechanism", string(sec.SASL.Mechanism)); err != nil {
+		if err := m.SetKey("sasl.mechanism", sec.SASL.Mechanism); err != nil {
 			return fmt.Errorf("set sasl.mechanism: %w", err)
 		}
 		if sec.SASL.Username != "" {

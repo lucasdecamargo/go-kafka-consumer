@@ -6,9 +6,9 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/pollloop"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
 
 // Adapter wraps confluent-kafka-go's Consumer and implements
@@ -43,13 +43,13 @@ func WithLogger(l *slog.Logger) AdapterOption {
 	}
 }
 
-// NewAdapter creates a Kafka consumer adapter from the framework's Config.
+// NewAdapter creates a Kafka consumer adapter from the internal AdapterConfig.
 // The adapter subscribes to the configured topics and delegates rebalance
 // events to the provided RebalanceHandler.
 //
 // The caller must call Close() when done to leave the consumer group.
 func NewAdapter(
-	cfg consumer.Config,
+	cfg AdapterConfig,
 	handler pollloop.RebalanceHandler,
 	opts ...AdapterOption,
 ) (*Adapter, error) {
@@ -88,7 +88,7 @@ func NewAdapter(
 	a.logger.Info("kafka adapter initialized",
 		slog.Any("topics", cfg.Topics),
 		slog.String("group_id", cfg.GroupID),
-		slog.String("security_protocol", string(cfg.Security.Protocol)),
+		slog.String("security_protocol", cfg.Security.Protocol),
 	)
 
 	return a, nil
@@ -101,14 +101,14 @@ func NewAdapter(
 //
 // Returns nil, nil when no messages are available.
 // Rebalance events are handled internally via the rebalance callback.
-func (a *Adapter) Poll(timeoutMs int) ([]consumer.Message, error) {
+func (a *Adapter) Poll(timeoutMs int) ([]types.Message, error) {
 	// First poll: block up to timeoutMs.
 	ev := a.c.Poll(timeoutMs)
 	if ev == nil {
 		return nil, nil
 	}
 
-	var msgs []consumer.Message
+	var msgs []types.Message
 	if err := a.handleEvent(ev, &msgs); err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (a *Adapter) Poll(timeoutMs int) ([]consumer.Message, error) {
 // handleEvent processes a single Kafka event. Messages are appended to
 // the msgs slice. Rebalance events are handled via the callback.
 // Errors are returned to the caller.
-func (a *Adapter) handleEvent(ev kafka.Event, msgs *[]consumer.Message) error {
+func (a *Adapter) handleEvent(ev kafka.Event, msgs *[]types.Message) error {
 	switch e := ev.(type) {
 	case *kafka.Message:
 		*msgs = append(*msgs, mapMessage(e))
@@ -317,9 +317,9 @@ func (a *Adapter) partitionsToTopicPartitions(partitions []int32) []kafka.TopicP
 }
 
 // mapMessage converts a confluent-kafka-go Message to our framework's
-// consumer.Message type.
-func mapMessage(km *kafka.Message) consumer.Message {
-	msg := consumer.Message{
+// types.Message type.
+func mapMessage(km *kafka.Message) types.Message {
+	msg := types.Message{
 		Partition: km.TopicPartition.Partition,
 		Offset:    int64(km.TopicPartition.Offset),
 		Key:       km.Key,
@@ -332,9 +332,9 @@ func mapMessage(km *kafka.Message) consumer.Message {
 	}
 
 	if len(km.Headers) > 0 {
-		msg.Headers = make([]consumer.Header, len(km.Headers))
+		msg.Headers = make([]types.Header, len(km.Headers))
 		for i, h := range km.Headers {
-			msg.Headers[i] = consumer.Header{
+			msg.Headers[i] = types.Header{
 				Key:   h.Key,
 				Value: h.Value,
 			}
@@ -363,4 +363,3 @@ func mapTopicPartitions(tps []kafka.TopicPartition) []dispatcher.Partition {
 
 // Ensure Adapter implements pollloop.KafkaConsumer at compile time.
 var _ pollloop.KafkaConsumer = (*Adapter)(nil)
-

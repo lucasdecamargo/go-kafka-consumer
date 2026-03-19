@@ -5,16 +5,14 @@ import (
 	"testing"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
-
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
 )
 
-func baseConfig() consumer.Config {
-	cfg := consumer.DefaultConfig()
-	cfg.Brokers = []string{"broker1:9092", "broker2:9092"}
-	cfg.Topics = []string{"test-topic"}
-	cfg.GroupID = "test-group"
-	return cfg
+func baseConfig() AdapterConfig {
+	return AdapterConfig{
+		Brokers: []string{"broker1:9092", "broker2:9092"},
+		Topics:  []string{"test-topic"},
+		GroupID: "test-group",
+	}
 }
 
 func TestBuildConsumerConfig_Defaults(t *testing.T) {
@@ -35,9 +33,9 @@ func TestBuildConsumerConfig_Defaults(t *testing.T) {
 
 func TestBuildConsumerConfig_SSL(t *testing.T) {
 	cfg := baseConfig()
-	cfg.Security = consumer.SecurityConfig{
-		Protocol: consumer.ProtocolSSL,
-		TLS: &consumer.TLSConfig{
+	cfg.Security = SecurityConfig{
+		Protocol: "ssl",
+		TLS: &TLSConfig{
 			CAFile:   "/certs/ca.pem",
 			CertFile: "/certs/client.pem",
 			KeyFile:  "/certs/client.key",
@@ -57,9 +55,9 @@ func TestBuildConsumerConfig_SSL(t *testing.T) {
 
 func TestBuildConsumerConfig_SSL_InsecureSkipVerify(t *testing.T) {
 	cfg := baseConfig()
-	cfg.Security = consumer.SecurityConfig{
-		Protocol: consumer.ProtocolSSL,
-		TLS: &consumer.TLSConfig{
+	cfg.Security = SecurityConfig{
+		Protocol: "ssl",
+		TLS: &TLSConfig{
 			InsecureSkipVerify: true,
 		},
 	}
@@ -75,10 +73,10 @@ func TestBuildConsumerConfig_SSL_InsecureSkipVerify(t *testing.T) {
 
 func TestBuildConsumerConfig_SASL_Plain(t *testing.T) {
 	cfg := baseConfig()
-	cfg.Security = consumer.SecurityConfig{
-		Protocol: consumer.ProtocolSASLPlaintext,
-		SASL: &consumer.SASLConfig{
-			Mechanism: consumer.SASLPlain,
+	cfg.Security = SecurityConfig{
+		Protocol: "sasl_plaintext",
+		SASL: &SASLConfig{
+			Mechanism: "PLAIN",
 			Username:  "user",
 			Password:  "secret",
 		},
@@ -97,13 +95,13 @@ func TestBuildConsumerConfig_SASL_Plain(t *testing.T) {
 
 func TestBuildConsumerConfig_SASL_SCRAM256(t *testing.T) {
 	cfg := baseConfig()
-	cfg.Security = consumer.SecurityConfig{
-		Protocol: consumer.ProtocolSASLSSL,
-		TLS: &consumer.TLSConfig{
+	cfg.Security = SecurityConfig{
+		Protocol: "sasl_ssl",
+		TLS: &TLSConfig{
 			CAFile: "/certs/ca.pem",
 		},
-		SASL: &consumer.SASLConfig{
-			Mechanism: consumer.SASLSCRAMSHA256,
+		SASL: &SASLConfig{
+			Mechanism: "SCRAM-SHA-256",
 			Username:  "user",
 			Password:  "secret",
 		},
@@ -121,13 +119,13 @@ func TestBuildConsumerConfig_SASL_SCRAM256(t *testing.T) {
 
 func TestBuildConsumerConfig_SASL_SCRAM512(t *testing.T) {
 	cfg := baseConfig()
-	cfg.Security = consumer.SecurityConfig{
-		Protocol: consumer.ProtocolSASLSSL,
-		TLS: &consumer.TLSConfig{
+	cfg.Security = SecurityConfig{
+		Protocol: "sasl_ssl",
+		TLS: &TLSConfig{
 			CAFile: "/certs/ca.pem",
 		},
-		SASL: &consumer.SASLConfig{
-			Mechanism: consumer.SASLSCRAMSHA512,
+		SASL: &SASLConfig{
+			Mechanism: "SCRAM-SHA-512",
 			Username:  "user",
 			Password:  "secret",
 		},
@@ -143,13 +141,13 @@ func TestBuildConsumerConfig_SASL_SCRAM512(t *testing.T) {
 
 func TestBuildConsumerConfig_OAuthBearer(t *testing.T) {
 	cfg := baseConfig()
-	cfg.Security = consumer.SecurityConfig{
-		Protocol: consumer.ProtocolSASLSSL,
-		TLS: &consumer.TLSConfig{
+	cfg.Security = SecurityConfig{
+		Protocol: "sasl_ssl",
+		TLS: &TLSConfig{
 			CAFile: "/certs/ca.pem",
 		},
-		SASL: &consumer.SASLConfig{
-			Mechanism:         consumer.SASLOAuthBearer,
+		SASL: &SASLConfig{
+			Mechanism:         "OAUTHBEARER",
 			OAuthBearerConfig: "scope=openid",
 		},
 	}

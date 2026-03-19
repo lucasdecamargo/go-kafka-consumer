@@ -11,9 +11,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ import (
 
 type mockKafka struct {
 	mu             sync.Mutex
-	pollFn         func(timeoutMs int) ([]consumer.Message, error)
+	pollFn         func(timeoutMs int) ([]types.Message, error)
 	commitFn       func(offsets map[int32]int64) error
 	pauseFn        func(partitions []int32) error
 	resumeFn       func(partitions []int32) error
@@ -36,7 +36,7 @@ type mockKafka struct {
 
 func newMockKafka() *mockKafka {
 	return &mockKafka{
-		pollFn:       func(int) ([]consumer.Message, error) { return nil, nil },
+		pollFn:       func(int) ([]types.Message, error) { return nil, nil },
 		commitFn:     func(map[int32]int64) error { return nil },
 		pauseFn:      func([]int32) error { return nil },
 		resumeFn:     func([]int32) error { return nil },
@@ -45,7 +45,7 @@ func newMockKafka() *mockKafka {
 	}
 }
 
-func (m *mockKafka) Poll(timeoutMs int) ([]consumer.Message, error) {
+func (m *mockKafka) Poll(timeoutMs int) ([]types.Message, error) {
 	return m.pollFn(timeoutMs)
 }
 
@@ -95,7 +95,7 @@ func (m *mockKafka) Close() error {
 
 type mockDispatcher struct {
 	mu                sync.Mutex
-	sendFn            func(ctx context.Context, partition int32, msgs []consumer.Message) error
+	sendFn            func(ctx context.Context, partition int32, msgs []types.Message) error
 	readyCh           chan struct{}
 	circuitCh         chan circuit.State
 	assignedCalls     [][]dispatcher.Partition
@@ -106,19 +106,21 @@ type mockDispatcher struct {
 
 type sendCall struct {
 	Partition int32
-	Messages  []consumer.Message
+	Messages  []types.Message
 }
 
 func newMockDispatcher() *mockDispatcher {
 	return &mockDispatcher{
-		sendFn:    func(context.Context, int32, []consumer.Message) error { return nil },
+		sendFn:    func(context.Context, int32, []types.Message) error { return nil },
 		readyCh:   make(chan struct{}, 1),
 		circuitCh: make(chan circuit.State, 3),
 		closeFn:   func(context.Context) error { return nil },
 	}
 }
 
-func (m *mockDispatcher) Send(ctx context.Context, partition int32, msgs []consumer.Message) error {
+func (m *mockDispatcher) Start(_ context.Context) {}
+
+func (m *mockDispatcher) Send(ctx context.Context, partition int32, msgs []types.Message) error {
 	m.mu.Lock()
 	m.sendCalls = append(m.sendCalls, sendCall{Partition: partition, Messages: msgs})
 	m.mu.Unlock()
@@ -316,14 +318,14 @@ func TestHappyPath_PollAndDispatch(t *testing.T) {
 	disp := newMockDispatcher()
 	coord := newMockCoordinator()
 
-	msgs := []consumer.Message{
+	msgs := []types.Message{
 		{Partition: 0, Offset: 10, Value: []byte("a")},
 		{Partition: 0, Offset: 11, Value: []byte("b")},
 		{Partition: 1, Offset: 20, Value: []byte("c")},
 	}
 
 	var pollCount int
-	kafka.pollFn = func(int) ([]consumer.Message, error) {
+	kafka.pollFn = func(int) ([]types.Message, error) {
 		pollCount++
 		if pollCount == 1 {
 			return msgs, nil
@@ -390,15 +392,15 @@ func TestBackpressure_PauseAndResume(t *testing.T) {
 	disp := newMockDispatcher()
 	coord := newMockCoordinator()
 
-	kafka.pollFn = func(int) ([]consumer.Message, error) {
-		return []consumer.Message{
+	kafka.pollFn = func(int) ([]types.Message, error) {
+		return []types.Message{
 			{Partition: 0, Offset: 10, Value: []byte("a")},
 		}, nil
 	}
 
 	// Dispatcher returns backpressure on first call.
 	var sendCount int
-	disp.sendFn = func(_ context.Context, _ int32, _ []consumer.Message) error {
+	disp.sendFn = func(_ context.Context, _ int32, _ []types.Message) error {
 		sendCount++
 		if sendCount == 1 {
 			return dispatcher.ErrBackpressure
@@ -838,7 +840,7 @@ func TestHealthProbes(t *testing.T) {
 }
 
 func TestGroupByPartition(t *testing.T) {
-	msgs := []consumer.Message{
+	msgs := []types.Message{
 		{Partition: 0, Offset: 1},
 		{Partition: 1, Offset: 2},
 		{Partition: 0, Offset: 3},
@@ -865,9 +867,9 @@ func TestDegradedMode_SkipsDispatchButKeepsPoll(t *testing.T) {
 	coord := newMockCoordinator()
 
 	var pollCount int
-	kafka.pollFn = func(int) ([]consumer.Message, error) {
+	kafka.pollFn = func(int) ([]types.Message, error) {
 		pollCount++
-		return []consumer.Message{
+		return []types.Message{
 			{Partition: 0, Offset: int64(pollCount), Value: []byte("x")},
 		}, nil
 	}
@@ -887,12 +889,15 @@ func TestDegradedMode_SkipsDispatchButKeepsPoll(t *testing.T) {
 	// Wait a bit then enter degraded mode.
 	time.Sleep(30 * time.Millisecond)
 
-	sendsBefore := len(disp.getSendCalls())
-
 	// Simulate circuit breaker open.
 	disp.circuitCh <- circuit.Open
-	time.Sleep(60 * time.Millisecond)
 
+	// Wait for the degraded mode to be picked up by the select loop.
+	time.Sleep(30 * time.Millisecond)
+
+	// Record sends AFTER degraded mode is active.
+	sendsBefore := len(disp.getSendCalls())
+	time.Sleep(60 * time.Millisecond)
 	sendsAfter := len(disp.getSendCalls())
 
 	// No new dispatches should have happened during degraded mode.

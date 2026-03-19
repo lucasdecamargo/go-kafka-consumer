@@ -10,8 +10,8 @@ package dispatcher
 import (
 	"context"
 
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
 
 // Partition represents a Kafka partition assignment used in rebalance
@@ -30,13 +30,20 @@ type Partition struct {
 // The poll loop is the sole caller of this interface. Workers and the
 // OffsetCoordinator are internal to the Dispatcher implementation.
 type Dispatcher interface {
+	// Start launches the Dispatcher's worker goroutines. Must be called
+	// exactly once before Send(). The context controls worker lifecycle —
+	// canceling it triggers graceful shutdown of all workers.
+	//
+	// Called by: Consumer.Run(), during startup.
+	Start(ctx context.Context)
+
 	// Send delivers a group of messages from a single partition to the
 	// Dispatcher for batch assembly and processing. Returns an error when
 	// the Dispatcher is at capacity (backpressure signal), indicating the
 	// poll loop should pause the partition.
 	//
 	// Called by: Poll loop (single goroutine).
-	Send(ctx context.Context, partition int32, msgs []consumer.Message) error
+	Send(ctx context.Context, partition int32, msgs []types.Message) error
 
 	// Ready returns a channel that is signaled when the Dispatcher has
 	// capacity to accept new messages after a backpressure event. The poll

@@ -10,9 +10,9 @@ import (
 
 	gobreaker "github.com/sony/gobreaker/v2"
 
-	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/offset"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
 
 // ErrBackpressure is returned by Send() when the Dispatcher's internal
@@ -24,14 +24,14 @@ var ErrBackpressure = errors.New("dispatcher: at capacity")
 type batch struct {
 	partition int32
 	maxOffset int64
-	messages  []consumer.Message
+	messages  []types.Message
 }
 
 // partitionBuffer holds buffered messages for a single partition that have
 // not yet been assembled into a batch, and tracks whether the partition
 // has an in-flight batch.
 type partitionBuffer struct {
-	messages []consumer.Message
+	messages []types.Message
 	inFlight bool
 	// lingerTimer fires to flush partial batches at low throughput.
 	lingerTimer *time.Timer
@@ -45,7 +45,7 @@ type partitionBuffer struct {
 // integration.
 type UnorderedDispatcher struct {
 	cfg         Config
-	processor   consumer.BatchProcessor
+	processor   types.BatchProcessor
 	coordinator offset.Coordinator
 	logger      *slog.Logger
 	dlqProducer DLQProducer
@@ -87,7 +87,7 @@ type UnorderedDispatcher struct {
 // configuration, processor, offset coordinator, and optional dependencies.
 func NewUnorderedDispatcher(
 	cfg Config,
-	processor consumer.BatchProcessor,
+	processor types.BatchProcessor,
 	coordinator offset.Coordinator,
 	opts ...UnorderedOption,
 ) (*UnorderedDispatcher, error) {
@@ -174,7 +174,7 @@ func (d *UnorderedDispatcher) Start(ctx context.Context) {
 // batch is dispatched to the worker channel.
 //
 // Returns ErrBackpressure if the worker channel is at capacity.
-func (d *UnorderedDispatcher) Send(ctx context.Context, partition int32, msgs []consumer.Message) error {
+func (d *UnorderedDispatcher) Send(ctx context.Context, partition int32, msgs []types.Message) error {
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -184,7 +184,7 @@ func (d *UnorderedDispatcher) Send(ctx context.Context, partition int32, msgs []
 	pb, ok := d.partitions[partition]
 	if !ok {
 		pb = &partitionBuffer{
-			messages: make([]consumer.Message, 0, d.cfg.BatchSize),
+			messages: make([]types.Message, 0, d.cfg.BatchSize),
 		}
 		d.partitions[partition] = pb
 	}
@@ -217,7 +217,7 @@ func (d *UnorderedDispatcher) OnPartitionsAssigned(partitions []Partition) {
 	for _, p := range partitions {
 		if _, exists := d.partitions[p.Partition]; !exists {
 			d.partitions[p.Partition] = &partitionBuffer{
-				messages: make([]consumer.Message, 0, d.cfg.BatchSize),
+				messages: make([]types.Message, 0, d.cfg.BatchSize),
 			}
 			d.logger.Debug("partition assigned",
 				slog.Int("partition", int(p.Partition)),
@@ -326,7 +326,7 @@ func (d *UnorderedDispatcher) assembleBatch(pb *partitionBuffer, partition int32
 		size = len(pb.messages)
 	}
 
-	msgs := make([]consumer.Message, size)
+	msgs := make([]types.Message, size)
 	copy(msgs, pb.messages[:size])
 
 	// Shift remaining messages to the front.
@@ -484,7 +484,7 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 		result, cbErr := d.cb.Execute(func() (any, error) {
 			err := d.processor(ctx, b.messages)
 			if err != nil {
-				if consumer.IsNonRetryable(err) {
+				if types.IsNonRetryable(err) {
 					// Return as result, not error — CB sees success.
 					return &nonRetryableWrapper{err: err}, nil
 				}
