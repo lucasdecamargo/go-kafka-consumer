@@ -112,22 +112,43 @@ func (c *Consumer) Run(ctx context.Context) error {
 		offset.WithLogger(logger.With(slog.String("component", "offset-coordinator"))),
 	)
 
-	// 2. Create Dispatcher based on dispatch mode.
-	disp, err := c.createDispatcher(coord, logger)
+	// 2. Create DLQ producer (if configured).
+	var dlq *kafka.DLQProducer
+	if c.cfg.DLQTopic != "" {
+		dlqCfg := kafka.DLQProducerConfig{
+			Topic:    c.cfg.DLQTopic,
+			Brokers:  c.cfg.Brokers,
+			Security: c.mapSecurityConfig(),
+		}
+
+		var err error
+		dlq, err = kafka.NewDLQProducer(dlqCfg,
+			kafka.WithDLQLogger(logger.With(slog.String("component", "dlq-producer"))),
+		)
+		if err != nil {
+			return fmt.Errorf("consumer: create DLQ producer: %w", err)
+		}
+		defer dlq.Close()
+
+		logger.Info("DLQ producer created", slog.String("topic", c.cfg.DLQTopic))
+	}
+
+	// 3. Create Dispatcher based on dispatch mode.
+	disp, err := c.createDispatcher(coord, dlq, logger)
 	if err != nil {
 		return fmt.Errorf("consumer: create dispatcher: %w", err)
 	}
 
-	// 3. Create Health state.
+	// 4. Create Health state.
 	health := &pollloop.Health{}
 
-	// 4. Create rebalance forwarder to break the circular dependency
+	// 5. Create rebalance forwarder to break the circular dependency
 	// between the Kafka adapter (needs RebalanceHandler) and the PollLoop
 	// (needs KafkaConsumer). Safe because rebalance callbacks only fire
 	// during Poll(), which runs after the PollLoop is fully constructed.
 	fwd := &rebalanceForwarder{}
 
-	// 5. Create Kafka adapter with mapped config.
+	// 6. Create Kafka adapter with mapped config.
 	kafkaCfg := c.mapKafkaConfig()
 	adapter, err := kafka.NewAdapter(kafkaCfg, fwd,
 		kafka.WithLogger(logger.With(slog.String("component", "kafka-adapter"))),
@@ -136,7 +157,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		return fmt.Errorf("consumer: create kafka adapter: %w", err)
 	}
 
-	// 6. Create PollLoop.
+	// 7. Create PollLoop.
 	plCfg := pollloop.Config{
 		PollInterval:           c.cfg.PollInterval,
 		CommitInterval:         c.cfg.CommitInterval,
@@ -153,10 +174,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 		return fmt.Errorf("consumer: create poll loop: %w", err)
 	}
 
-	// 7. Complete the forwarder — the PollLoop is the rebalance handler.
+	// 8. Complete the forwarder — the PollLoop is the rebalance handler.
 	fwd.target = pl
 
-	// 8. Start dispatcher workers.
+	// 9. Start dispatcher workers.
 	// Create a cancelable context for the entire run. Components that
 	// detect fatal conditions (e.g., worker panics) call runCancel,
 	// which propagates shutdown to the poll loop and all workers.
@@ -165,7 +186,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 	disp.Start(runCtx, runCancel)
 
-	// 9. Start HTTP health/metrics server (if configured).
+	// 10. Start HTTP health/metrics server (if configured).
 	if c.cfg.HealthAddr != "" {
 		gatherer := c.resolveGatherer(reg)
 		srv := server.New(
@@ -193,7 +214,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 	logger.Info("consumer started — all components assembled")
 
-	// 10. Run the poll loop (blocks until runCtx canceled).
+	// 11. Run the poll loop (blocks until runCtx canceled).
 	// PollLoop.Run handles graceful shutdown: drain dispatcher, final
 	// commit, close Kafka consumer.
 	return pl.Run(runCtx)
@@ -204,6 +225,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 // and optional dependencies (logger, metrics, DLQ).
 func (c *Consumer) createDispatcher(
 	coord offset.Coordinator,
+	dlq *kafka.DLQProducer,
 	logger *slog.Logger,
 ) (dispatcher.Dispatcher, error) {
 	dispCfg := dispatcher.Config{
@@ -221,14 +243,19 @@ func (c *Consumer) createDispatcher(
 
 	dispLogger := logger.With(slog.String("component", "dispatcher"))
 
+	var dispOpts []dispatcher.UnorderedOption
+	dispOpts = append(dispOpts, dispatcher.WithLogger(dispLogger))
+	if dlq != nil {
+		dispOpts = append(dispOpts, dispatcher.WithDLQProducer(dlq))
+	}
+
 	switch c.cfg.DispatchMode {
 	case Unordered:
 		return dispatcher.NewUnorderedDispatcher(
 			dispCfg,
 			c.processor,
 			coord,
-			dispatcher.WithLogger(dispLogger),
-			// DLQ producer is wired via consumer-level options (future WI-5).
+			dispOpts...,
 		)
 
 	case PartitionOrdered:
@@ -245,17 +272,22 @@ func (c *Consumer) createDispatcher(
 // mapKafkaConfig translates the public consumer.Config and
 // consumer.SecurityConfig to the internal kafka.AdapterConfig.
 func (c *Consumer) mapKafkaConfig() kafka.AdapterConfig {
-	cfg := kafka.AdapterConfig{
-		Brokers: c.cfg.Brokers,
-		GroupID: c.cfg.GroupID,
-		Topics:  c.cfg.Topics,
-		Security: kafka.SecurityConfig{
-			Protocol: string(c.cfg.Security.Protocol),
-		},
+	return kafka.AdapterConfig{
+		Brokers:  c.cfg.Brokers,
+		GroupID:  c.cfg.GroupID,
+		Topics:   c.cfg.Topics,
+		Security: c.mapSecurityConfig(),
+	}
+}
+
+// mapSecurityConfig translates consumer.SecurityConfig to kafka.SecurityConfig.
+func (c *Consumer) mapSecurityConfig() kafka.SecurityConfig {
+	sec := kafka.SecurityConfig{
+		Protocol: string(c.cfg.Security.Protocol),
 	}
 
 	if c.cfg.Security.TLS != nil {
-		cfg.Security.TLS = &kafka.TLSConfig{
+		sec.TLS = &kafka.TLSConfig{
 			CAFile:             c.cfg.Security.TLS.CAFile,
 			CertFile:           c.cfg.Security.TLS.CertFile,
 			KeyFile:            c.cfg.Security.TLS.KeyFile,
@@ -264,7 +296,7 @@ func (c *Consumer) mapKafkaConfig() kafka.AdapterConfig {
 	}
 
 	if c.cfg.Security.SASL != nil {
-		cfg.Security.SASL = &kafka.SASLConfig{
+		sec.SASL = &kafka.SASLConfig{
 			Mechanism:         string(c.cfg.Security.SASL.Mechanism),
 			Username:          c.cfg.Security.SASL.Username,
 			Password:          c.cfg.Security.SASL.Password,
@@ -272,7 +304,7 @@ func (c *Consumer) mapKafkaConfig() kafka.AdapterConfig {
 		}
 	}
 
-	return cfg
+	return sec
 }
 
 // resolveGatherer returns a prometheus.Gatherer from the configured

@@ -84,6 +84,13 @@ type Config struct {
 	// Default: 60s.
 	CBInterval time.Duration
 
+	// DLQTopic is the Kafka topic name for the Dead Letter Queue.
+	// When set, messages that fail processing (non-retryable errors or
+	// retries exhausted) are published to this topic with error metadata
+	// as headers. If empty, failed batches are logged and dropped.
+	// See FR-4.
+	DLQTopic string
+
 	// HealthAddr is the TCP address for the health and metrics HTTP server
 	// (e.g., ":8080", "0.0.0.0:9090"). If empty, the server is not started.
 	// Exposes /healthz, /readyz, and /metrics endpoints.
