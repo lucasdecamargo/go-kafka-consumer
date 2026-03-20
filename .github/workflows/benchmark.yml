@@ -3,6 +3,12 @@ name: Benchmark Regression
 on:
   pull_request:
     branches: [main]
+    # Release Please PRs only bump CHANGELOG and version metadata — no code
+    # changes to benchmark. Excluding them avoids spurious noise.
+    paths-ignore:
+      - "CHANGELOG.md"
+      - ".release-please-manifest.json"
+      - "version.go"
 
 permissions:
   contents: read
