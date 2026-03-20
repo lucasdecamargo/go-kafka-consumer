@@ -29,9 +29,9 @@ func main() {
 	// 2. Define the processor — this is the only business logic you write.
 	//    The framework calls this function with batches of messages.
 	processor := func(ctx context.Context, batch []consumer.Message) error {
-		for _, msg := range batch {
+		for i := range batch {
 			fmt.Printf("partition=%d offset=%d key=%s value=%s\n",
-				msg.Partition, msg.Offset, msg.Key, msg.Value,
+				batch[i].Partition, batch[i].Offset, batch[i].Key, batch[i].Value,
 			)
 		}
 		return nil
@@ -45,9 +45,10 @@ func main() {
 
 	// 4. Run until SIGTERM or SIGINT.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
-	if err := c.Run(ctx); err != nil {
+	err = c.Run(ctx)
+	stop()
+	if err != nil {
 		log.Fatalf("consumer error: %v", err)
 	}
 }

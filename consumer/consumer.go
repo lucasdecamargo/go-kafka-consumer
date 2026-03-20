@@ -249,9 +249,10 @@ func (c *Consumer) createDispatcher(
 
 	dispLogger := logger.With(slog.String("component", "dispatcher"))
 
-	var dispOpts []dispatcher.UnorderedOption
-	dispOpts = append(dispOpts, dispatcher.WithLogger(dispLogger))
-	dispOpts = append(dispOpts, dispatcher.WithMetrics(dm))
+	dispOpts := []dispatcher.UnorderedOption{
+		dispatcher.WithLogger(dispLogger),
+		dispatcher.WithMetrics(dm),
+	}
 	if dlq != nil {
 		dispOpts = append(dispOpts, dispatcher.WithDLQProducer(dlq))
 	}

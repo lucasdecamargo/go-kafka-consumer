@@ -61,14 +61,14 @@ func main() {
 	cfg.MaxRetries = 3
 
 	processor := func(ctx context.Context, batch []consumer.Message) error {
-		for _, msg := range batch {
+		for i := range batch {
 			var event Event
-			if err := json.Unmarshal(msg.Value, &event); err != nil {
+			if err := json.Unmarshal(batch[i].Value, &event); err != nil {
 				// Parsing failure — retrying won't help.
 				// Wrap with ErrNonRetryable to skip retries and go straight to DLQ.
 				return &consumer.ErrNonRetryable{
 					Err: fmt.Errorf("invalid JSON in message partition=%d offset=%d: %w",
-						msg.Partition, msg.Offset, err),
+						batch[i].Partition, batch[i].Offset, err),
 				}
 			}
 
@@ -76,7 +76,7 @@ func main() {
 				// Business rule violation — also non-retryable.
 				return &consumer.ErrNonRetryable{
 					Err: fmt.Errorf("missing event type in message partition=%d offset=%d",
-						msg.Partition, msg.Offset),
+						batch[i].Partition, batch[i].Offset),
 				}
 			}
 
@@ -96,12 +96,13 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
 	logger.Info("starting consumer with DLQ enabled",
 		slog.String("dlq_topic", cfg.DLQTopic),
 	)
-	if err := c.Run(ctx); err != nil {
+	err = c.Run(ctx)
+	stop()
+	if err != nil {
 		log.Fatalf("consumer error: %v", err)
 	}
 }

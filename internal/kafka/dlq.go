@@ -119,11 +119,11 @@ func (d *DLQProducer) Produce(ctx context.Context, msgs []types.Message, reason 
 	reasonStr := reason.Error()
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 
-	for _, msg := range msgs {
-		headers := buildDLQHeaders(msg, reasonStr, timestamp)
+	for i := range msgs {
+		headers := buildDLQHeaders(msgs[i], reasonStr, timestamp)
 
 		// Preserve original message headers.
-		for _, h := range msg.Headers {
+		for _, h := range msgs[i].Headers {
 			headers = append(headers, kafka.Header{
 				Key:   h.Key,
 				Value: h.Value,
@@ -135,14 +135,14 @@ func (d *DLQProducer) Produce(ctx context.Context, msgs []types.Message, reason 
 				Topic:     &d.topic,
 				Partition: kafka.PartitionAny,
 			},
-			Key:     msg.Key,
-			Value:   msg.Value,
+			Key:     msgs[i].Key,
+			Value:   msgs[i].Value,
 			Headers: headers,
 		}
 
 		if err := d.producer.Produce(kMsg, deliveryCh); err != nil {
 			return fmt.Errorf("dlq: enqueue message (partition=%d, offset=%d): %w",
-				msg.Partition, msg.Offset, err)
+				msgs[i].Partition, msgs[i].Offset, err)
 		}
 	}
 

@@ -35,7 +35,7 @@ func (c *Cluster) CreateTopic(ctx context.Context, topic string, partitions int)
 	}
 	for _, r := range results {
 		if r.Error.Code() != ckg.ErrNoError {
-			return fmt.Errorf("create topic %q: %s", topic, r.Error)
+			return fmt.Errorf("create topic %q: %w", topic, r.Error)
 		}
 	}
 
@@ -61,7 +61,7 @@ func (c *Cluster) CommittedOffsets(ctx context.Context, groupID, topic string, p
 	if err != nil {
 		return nil, fmt.Errorf("create consumer for offset check: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	tps := make([]ckg.TopicPartition, partitions)
 	for i := range partitions {
@@ -108,7 +108,7 @@ func (c *Cluster) TopicMessageCount(ctx context.Context, topic string, partition
 	if err != nil {
 		return 0, fmt.Errorf("create consumer for message count: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	var total int64
 	for i := range partitions {

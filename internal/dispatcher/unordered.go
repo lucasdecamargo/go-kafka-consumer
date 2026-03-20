@@ -253,22 +253,25 @@ func (d *UnorderedDispatcher) OnPartitionsRevoked(partitions []Partition) {
 	defer d.mu.Unlock()
 
 	for _, p := range partitions {
-		if pb, exists := d.partitions[p.Partition]; exists {
-			d.lingerMu.Lock()
-			if pb.lingerTimer != nil {
-				pb.lingerTimer.Stop()
-				pb.lingerTimer = nil
-			}
-			d.lingerMu.Unlock()
-
-			// Clear buffered (not yet dispatched) messages.
-			pb.messages = pb.messages[:0]
-
-			d.logger.Debug("partition revoked",
-				slog.Int("partition", int(p.Partition)),
-				slog.String("topic", p.Topic),
-			)
+		pb, exists := d.partitions[p.Partition]
+		if !exists {
+			continue
 		}
+
+		d.lingerMu.Lock()
+		if pb.lingerTimer != nil {
+			pb.lingerTimer.Stop()
+			pb.lingerTimer = nil
+		}
+		d.lingerMu.Unlock()
+
+		// Clear buffered (not yet dispatched) messages.
+		pb.messages = pb.messages[:0]
+
+		d.logger.Debug("partition revoked",
+			slog.Int("partition", int(p.Partition)),
+			slog.String("topic", p.Topic),
+		)
 	}
 }
 
@@ -536,7 +539,7 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 			d.sendToDLQ(ctx, b, nrw.err, metrics.StatusNonRetryable)
 			d.recordBatchMetrics(b, start, metrics.StatusNonRetryable)
 			d.coordinator.BatchComplete(b.partition, b.maxOffset)
-			d.onBatchDone(b.partition, ctx)
+			d.onBatchDone(ctx, b.partition)
 			return
 		}
 
@@ -544,7 +547,7 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 			// Success — processor returned nil, no CB error.
 			d.recordBatchMetrics(b, start, metrics.StatusSuccess)
 			d.coordinator.BatchComplete(b.partition, b.maxOffset)
-			d.onBatchDone(b.partition, ctx)
+			d.onBatchDone(ctx, b.partition)
 			return
 		}
 
@@ -595,7 +598,7 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 	d.sendToDLQ(ctx, b, lastErr, metrics.StatusRetriesExhausted)
 	d.recordBatchMetrics(b, start, metrics.StatusRetriesExhausted)
 	d.coordinator.BatchComplete(b.partition, b.maxOffset)
-	d.onBatchDone(b.partition, ctx)
+	d.onBatchDone(ctx, b.partition)
 }
 
 // holdUntilCircuitCloses blocks the worker until the circuit breaker
@@ -652,7 +655,7 @@ func (d *UnorderedDispatcher) sendToDLQ(ctx context.Context, b batch, reason err
 // It marks the partition as no longer in-flight and dispatches the next
 // batch if buffered messages are available. Signals Ready if the channel
 // was at capacity.
-func (d *UnorderedDispatcher) onBatchDone(partition int32, ctx context.Context) {
+func (d *UnorderedDispatcher) onBatchDone(ctx context.Context, partition int32) {
 	d.mu.Lock()
 	pb, ok := d.partitions[partition]
 	if ok {

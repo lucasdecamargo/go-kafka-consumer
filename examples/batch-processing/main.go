@@ -33,10 +33,10 @@ func main() {
 	cfg.GroupID = "batch-example"
 
 	// Tune batch assembly for high throughput.
-	cfg.BatchSize = 200           // Collect up to 200 messages per batch.
+	cfg.BatchSize = 200                    // Collect up to 200 messages per batch.
 	cfg.LingerTime = 50 * time.Millisecond // Wait up to 50ms for a full batch.
-	cfg.WorkerCount = 8           // 8 concurrent workers for I/O-bound processing.
-	cfg.ChannelCap = 500          // Buffer up to 500 batches in the dispatch channel.
+	cfg.WorkerCount = 8                    // 8 concurrent workers for I/O-bound processing.
+	cfg.ChannelCap = 500                   // Buffer up to 500 batches in the dispatch channel.
 
 	// Use a structured logger so you can see framework internals.
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -53,8 +53,8 @@ func main() {
 		)
 
 		// Simulate work — replace with your actual processing logic.
-		for _, msg := range batch {
-			_ = fmt.Sprintf("processed key=%s", msg.Key)
+		for i := range batch {
+			_ = fmt.Sprintf("processed key=%s", batch[i].Key)
 		}
 
 		return nil
@@ -68,10 +68,11 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
 	logger.Info("starting batch processing consumer")
-	if err := c.Run(ctx); err != nil {
+	err = c.Run(ctx)
+	stop()
+	if err != nil {
 		log.Fatalf("consumer error: %v", err)
 	}
 }

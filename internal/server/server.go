@@ -96,11 +96,11 @@ func healthzHandler(health HealthChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if health.IsLive() {
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "ok")
+			_, _ = fmt.Fprint(w, "ok")
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprint(w, "not live")
+		_, _ = fmt.Fprint(w, "not live")
 	}
 }
 
@@ -111,10 +111,10 @@ func readyzHandler(health HealthChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if health.IsReady() {
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "ok")
+			_, _ = fmt.Fprint(w, "ok")
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprint(w, "not ready")
+		_, _ = fmt.Fprint(w, "not ready")
 	}
 }

@@ -32,7 +32,7 @@ func (c *Cluster) ConsumeAll(ctx context.Context, topic, groupID string, maxMess
 	if err != nil {
 		return nil, fmt.Errorf("create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() { _ = consumer.Close() }()
 
 	if err := consumer.Subscribe(topic, nil); err != nil {
 		return nil, fmt.Errorf("subscribe to %q: %w", topic, err)

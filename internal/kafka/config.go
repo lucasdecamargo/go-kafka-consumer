@@ -57,7 +57,7 @@ func BuildConsumerConfig(cfg AdapterConfig) (*kafka.ConfigMap, error) {
 		"bootstrap.servers":               strings.Join(cfg.Brokers, ","),
 		"group.id":                        cfg.GroupID,
 		"enable.auto.commit":              false,
-		"partition.assignment.strategy":    "cooperative-sticky",
+		"partition.assignment.strategy":   "cooperative-sticky",
 		"auto.offset.reset":               "earliest",
 		"go.application.rebalance.enable": true,
 	}

@@ -338,8 +338,9 @@ func TestHappyPath_PollAndDispatch(t *testing.T) {
 	pl, health := newTestPollLoop(kafka, disp, coord)
 	runFor(t, pl, 50*time.Millisecond)
 
-	if !health.IsLive() == true {
-		// After Run returns, live should be false.
+	// After Run returns, live should be false.
+	if health.IsLive() {
+		t.Error("expected IsLive() == false after Run returns")
 	}
 
 	calls := disp.getSendCalls()

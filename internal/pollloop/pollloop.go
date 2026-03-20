@@ -535,8 +535,8 @@ func (pl *PollLoop) shutdown() error {
 // groupByPartition groups a slice of messages by their partition.
 func groupByPartition(msgs []types.Message) map[int32][]types.Message {
 	grouped := make(map[int32][]types.Message)
-	for _, msg := range msgs {
-		grouped[msg.Partition] = append(grouped[msg.Partition], msg)
+	for i := range msgs {
+		grouped[msgs[i].Partition] = append(grouped[msgs[i].Partition], msgs[i])
 	}
 	return grouped
 }

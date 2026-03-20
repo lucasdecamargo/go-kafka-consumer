@@ -7,15 +7,15 @@ import (
 
 // Poll loop metric name constants.
 const (
-	MessagesPolledTotal   = "kafka_consumer_messages_polled_total"
-	PollErrorsTotal       = "kafka_consumer_poll_errors_total"
-	CommitsTotal          = "kafka_consumer_commits_total"
-	CommitFailuresTotal   = "kafka_consumer_commit_failures_total"
-	DegradedMode          = "kafka_consumer_degraded_mode"
-	PartitionsAssigned    = "kafka_consumer_partitions_assigned"
-	RebalancesTotal       = "kafka_consumer_rebalances_total"
-	LastCommittedOffset   = "kafka_consumer_last_committed_offset"
-	PartitionsPaused      = "kafka_consumer_partitions_paused"
+	MessagesPolledTotal = "kafka_consumer_messages_polled_total"
+	PollErrorsTotal     = "kafka_consumer_poll_errors_total"
+	CommitsTotal        = "kafka_consumer_commits_total"
+	CommitFailuresTotal = "kafka_consumer_commit_failures_total"
+	DegradedMode        = "kafka_consumer_degraded_mode"
+	PartitionsAssigned  = "kafka_consumer_partitions_assigned"
+	RebalancesTotal     = "kafka_consumer_rebalances_total"
+	LastCommittedOffset = "kafka_consumer_last_committed_offset"
+	PartitionsPaused    = "kafka_consumer_partitions_paused"
 )
 
 // PollLoopMetrics holds all Prometheus metrics for the poll loop component.

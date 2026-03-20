@@ -33,8 +33,8 @@ type DegradedState struct {
 func (d *DegradedState) Set(reason DegradedReason) {
 	for {
 		old := d.reasons.Load()
-		new := old | uint32(reason)
-		if d.reasons.CompareAndSwap(old, new) {
+		updated := old | uint32(reason)
+		if d.reasons.CompareAndSwap(old, updated) {
 			return
 		}
 	}
@@ -44,8 +44,8 @@ func (d *DegradedState) Set(reason DegradedReason) {
 func (d *DegradedState) Clear(reason DegradedReason) {
 	for {
 		old := d.reasons.Load()
-		new := old &^ uint32(reason)
-		if d.reasons.CompareAndSwap(old, new) {
+		updated := old &^ uint32(reason)
+		if d.reasons.CompareAndSwap(old, updated) {
 			return
 		}
 	}

@@ -72,10 +72,11 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
 	logger.Info("consumer started — send SIGTERM or Ctrl+C to see graceful shutdown")
-	if err := c.Run(ctx); err != nil {
+	err = c.Run(ctx)
+	stop()
+	if err != nil {
 		logger.Error("consumer exited with error", slog.String("error", err.Error()))
 		os.Exit(1)
 	}

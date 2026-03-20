@@ -54,7 +54,8 @@ func main() {
 	cfg.GroupID = "security-example"
 
 	// Configure security based on available credentials.
-	if username != "" && caFile != "" {
+	switch {
+	case username != "" && caFile != "":
 		// Production: SASL_SSL with SCRAM-SHA-512
 		cfg.Security = consumer.SecurityConfig{
 			Protocol: consumer.ProtocolSASLSSL,
@@ -74,7 +75,7 @@ func main() {
 			slog.String("protocol", "SASL_SSL"),
 			slog.String("mechanism", "SCRAM-SHA-512"),
 		)
-	} else if caFile != "" {
+	case caFile != "":
 		// TLS only — no SASL authentication.
 		cfg.Security = consumer.SecurityConfig{
 			Protocol: consumer.ProtocolSSL,
@@ -85,15 +86,15 @@ func main() {
 		logger.Info("security configured",
 			slog.String("protocol", "SSL"),
 		)
-	} else {
+	default:
 		// Development: plaintext (default).
 		logger.Warn("running without security — set KAFKA_USERNAME, KAFKA_PASSWORD, and KAFKA_CA_FILE for production")
 	}
 
 	processor := func(ctx context.Context, batch []consumer.Message) error {
-		for _, msg := range batch {
+		for i := range batch {
 			fmt.Printf("partition=%d offset=%d key=%s\n",
-				msg.Partition, msg.Offset, msg.Key,
+				batch[i].Partition, batch[i].Offset, batch[i].Key,
 			)
 		}
 		return nil
@@ -107,9 +108,10 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
-	if err := c.Run(ctx); err != nil {
+	err = c.Run(ctx)
+	stop()
+	if err != nil {
 		log.Fatalf("consumer error: %v", err)
 	}
 }

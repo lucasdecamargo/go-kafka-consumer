@@ -78,12 +78,13 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
 	logger.Info("starting consumer with custom metrics",
 		slog.String("metrics_endpoint", "http://localhost"+cfg.HealthAddr+"/metrics"),
 	)
-	if err := c.Run(ctx); err != nil {
+	err = c.Run(ctx)
+	stop()
+	if err != nil {
 		log.Fatalf("consumer error: %v", err)
 	}
 }

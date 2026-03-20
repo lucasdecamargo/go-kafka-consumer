@@ -1,8 +1,8 @@
 package pollloop
 
 import (
-	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
 
 // KafkaConsumer abstracts the Kafka client for the poll loop. This

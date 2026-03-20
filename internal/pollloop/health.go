@@ -6,10 +6,10 @@ import "sync"
 // Thread-safe: the poll loop goroutine writes, and the HTTP health
 // handler reads concurrently.
 //
-// - Liveness: true while the poll loop goroutine is running. Prevents
-//   Kubernetes from restarting a healthy process.
-// - Readiness: true when the service can accept traffic. False when
-//   degraded (broker unavailable, circuit breaker open).
+//   - Liveness: true while the poll loop goroutine is running. Prevents
+//     Kubernetes from restarting a healthy process.
+//   - Readiness: true when the service can accept traffic. False when
+//     degraded (broker unavailable, circuit breaker open).
 type Health struct {
 	mu    sync.RWMutex
 	live  bool

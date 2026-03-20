@@ -17,7 +17,7 @@ import (
 // NewMessages creates count messages for the given partition with a payload
 // of valueSize bytes. Messages have sequential offsets and realistic
 // timestamps suitable for benchmarking.
-func NewMessages(partition int32, count int, valueSize int) []types.Message {
+func NewMessages(partition int32, count, valueSize int) []types.Message {
 	now := time.Now()
 	value := make([]byte, valueSize)
 	// Fill with non-zero data to avoid zero-page optimizations.
