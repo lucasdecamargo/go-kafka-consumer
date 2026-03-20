@@ -3,21 +3,20 @@ package dispatcher
 import (
 	"log/slog"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/metrics"
 )
 
 // unorderedOptions holds optional dependencies for the UnorderedDispatcher.
 type unorderedOptions struct {
 	logger      *slog.Logger
-	registerer  prometheus.Registerer
+	metrics     *metrics.DispatcherMetrics
 	dlqProducer DLQProducer
 }
 
 // defaultUnorderedOptions returns options with sensible defaults.
 func defaultUnorderedOptions() unorderedOptions {
 	return unorderedOptions{
-		logger:     slog.Default(),
-		registerer: prometheus.DefaultRegisterer,
+		logger: slog.Default(),
 	}
 }
 
@@ -33,12 +32,11 @@ func WithLogger(l *slog.Logger) UnorderedOption {
 	}
 }
 
-// WithMetrics sets the Prometheus registerer. Default: prometheus.DefaultRegisterer.
-func WithMetrics(reg prometheus.Registerer) UnorderedOption {
+// WithMetrics sets the dispatcher metrics struct. Created via
+// metrics.NewDispatcherMetrics(reg).
+func WithMetrics(m *metrics.DispatcherMetrics) UnorderedOption {
 	return func(o *unorderedOptions) {
-		if reg != nil {
-			o.registerer = reg
-		}
+		o.metrics = m
 	}
 }
 

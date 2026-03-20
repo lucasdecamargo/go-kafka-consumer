@@ -3,16 +3,16 @@ package dispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	gobreaker "github.com/sony/gobreaker/v2"
 
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/metrics"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/offset"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
@@ -85,12 +85,7 @@ type UnorderedDispatcher struct {
 	lingerMu sync.Mutex
 
 	// Prometheus metrics.
-	batchesTotal    *prometheus.CounterVec
-	batchLatency    prometheus.Histogram
-	retriesTotal    prometheus.Counter
-	cbStateGauge    prometheus.Gauge
-	workersActive   prometheus.Gauge
-	dlqMsgsTotal    *prometheus.CounterVec
+	m *metrics.DispatcherMetrics
 }
 
 // NewUnorderedDispatcher creates a new UnorderedDispatcher with the given
@@ -113,12 +108,17 @@ func NewUnorderedDispatcher(
 		opt(&o)
 	}
 
+	if o.metrics == nil {
+		return nil, errors.New("dispatcher: metrics must not be nil")
+	}
+
 	d := &UnorderedDispatcher{
 		cfg:            cfg,
 		processor:      processor,
 		coordinator:    coordinator,
 		logger:         o.logger,
 		dlqProducer:    o.dlqProducer,
+		m:              o.metrics,
 		batchCh:        make(chan batch, cfg.ChannelCap),
 		readyCh:        make(chan struct{}, 1),
 		circuitStateCh: make(chan circuit.State, 3),
@@ -154,9 +154,7 @@ func NewUnorderedDispatcher(
 				slog.String("to", to.String()),
 			)
 			// Update CB state gauge: 0=closed, 1=half-open, 2=open.
-			if d.cbStateGauge != nil {
-				d.cbStateGauge.Set(float64(newState))
-			}
+			d.m.CircuitBreakerState.Set(float64(newState))
 			// Non-blocking send — channel has capacity 3 for buffering
 			// rapid transitions.
 			select {
@@ -168,34 +166,6 @@ func NewUnorderedDispatcher(
 			}
 		},
 	})
-
-	// Register Prometheus metrics.
-	reg := o.registerer
-	d.batchesTotal = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-		Name: MetricBatchesTotal,
-		Help: "Total number of batches processed, labeled by outcome.",
-	}, []string{"status"})
-	d.batchLatency = promauto.With(reg).NewHistogram(prometheus.HistogramOpts{
-		Name:    MetricBatchLatencySeconds,
-		Help:    "End-to-end latency for processing a single batch.",
-		Buckets: prometheus.DefBuckets,
-	})
-	d.retriesTotal = promauto.With(reg).NewCounter(prometheus.CounterOpts{
-		Name: MetricRetriesTotal,
-		Help: "Total number of retry attempts across all batches.",
-	})
-	d.cbStateGauge = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-		Name: MetricCircuitBreakerState,
-		Help: "Current circuit breaker state: 0=closed, 1=half-open, 2=open.",
-	})
-	d.workersActive = promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-		Name: MetricWorkersActive,
-		Help: "Number of workers currently processing a batch.",
-	})
-	d.dlqMsgsTotal = promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-		Name: MetricDLQMessagesTotal,
-		Help: "Total number of messages sent to the dead letter queue.",
-	}, []string{"reason"})
 
 	return d, nil
 }
@@ -404,6 +374,7 @@ func (d *UnorderedDispatcher) dispatchBatch(_ context.Context, b batch) error {
 
 	select {
 	case d.batchCh <- b:
+		d.m.InflightMessages.WithLabelValues(fmt.Sprintf("%d", b.partition)).Add(float64(len(b.messages)))
 		d.logger.Debug("batch dispatched",
 			slog.Int("partition", int(b.partition)),
 			slog.Int64("max_offset", b.maxOffset),
@@ -497,9 +468,9 @@ func (d *UnorderedDispatcher) worker(ctx context.Context) {
 	}()
 
 	for b := range d.batchCh {
-		d.workersActive.Inc()
+		d.m.WorkersActive.Inc()
 		d.processBatch(ctx, b)
-		d.workersActive.Dec()
+		d.m.WorkersActive.Dec()
 	}
 }
 
@@ -511,7 +482,6 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 
 	for attempt := 0; attempt <= d.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
-			d.retriesTotal.Inc()
 			delay := backoff(attempt - 1)
 			d.logger.Debug("retrying batch",
 				slog.Int("partition", int(b.partition)),
@@ -553,9 +523,8 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 				slog.Int64("max_offset", b.maxOffset),
 				slog.String("error", nrw.err.Error()),
 			)
-			d.sendToDLQ(ctx, b, nrw.err, "non_retryable")
-			d.batchesTotal.WithLabelValues("non_retryable").Inc()
-			d.batchLatency.Observe(time.Since(start).Seconds())
+			d.sendToDLQ(ctx, b, nrw.err, metrics.StatusNonRetryable)
+			d.recordBatchMetrics(b, start, metrics.StatusNonRetryable)
 			d.coordinator.BatchComplete(b.partition, b.maxOffset)
 			d.onBatchDone(b.partition, ctx)
 			return
@@ -563,8 +532,7 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 
 		if cbErr == nil {
 			// Success — processor returned nil, no CB error.
-			d.batchesTotal.WithLabelValues("success").Inc()
-			d.batchLatency.Observe(time.Since(start).Seconds())
+			d.recordBatchMetrics(b, start, metrics.StatusSuccess)
 			d.coordinator.BatchComplete(b.partition, b.maxOffset)
 			d.onBatchDone(b.partition, ctx)
 			return
@@ -614,9 +582,8 @@ func (d *UnorderedDispatcher) processBatch(ctx context.Context, b batch) {
 		slog.Int("retries", d.cfg.MaxRetries),
 		slog.String("last_error", lastErr.Error()),
 	)
-	d.sendToDLQ(ctx, b, lastErr, "retries_exhausted")
-	d.batchesTotal.WithLabelValues("retries_exhausted").Inc()
-	d.batchLatency.Observe(time.Since(start).Seconds())
+	d.sendToDLQ(ctx, b, lastErr, metrics.StatusRetriesExhausted)
+	d.recordBatchMetrics(b, start, metrics.StatusRetriesExhausted)
 	d.coordinator.BatchComplete(b.partition, b.maxOffset)
 	d.onBatchDone(b.partition, ctx)
 }
@@ -668,7 +635,7 @@ func (d *UnorderedDispatcher) sendToDLQ(ctx context.Context, b batch, reason err
 		return
 	}
 
-	d.dlqMsgsTotal.WithLabelValues(reasonLabel).Add(float64(len(b.messages)))
+	d.m.DLQMessages.WithLabelValues(reasonLabel, fmt.Sprintf("%d", b.partition)).Add(float64(len(b.messages)))
 }
 
 // onBatchDone is called after a batch is fully processed (success or DLQ).
@@ -693,6 +660,24 @@ func (d *UnorderedDispatcher) onBatchDone(partition int32, ctx context.Context) 
 	// Dispatch next batch for this partition if messages are buffered.
 	if hasPending {
 		_ = d.tryDispatch(ctx, partition)
+	}
+}
+
+// recordBatchMetrics records per-message metrics for a completed batch:
+// messages_processed_total, message_delay, processing_time, and record_age.
+func (d *UnorderedDispatcher) recordBatchMetrics(b batch, start time.Time, status string) {
+	pLabel := fmt.Sprintf("%d", b.partition)
+	now := time.Now()
+	processingTime := now.Sub(start).Seconds()
+	msgCount := float64(len(b.messages))
+
+	d.m.MessagesProcessed.WithLabelValues(status, pLabel).Add(msgCount)
+	d.m.ProcessingTime.WithLabelValues(pLabel).Observe(processingTime)
+	d.m.InflightMessages.WithLabelValues(pLabel).Sub(msgCount)
+
+	for i := range b.messages {
+		d.m.MessageDelay.WithLabelValues(pLabel).Observe(now.Sub(b.messages[i].PolledAt).Seconds())
+		d.m.RecordAge.WithLabelValues(pLabel).Observe(now.Sub(b.messages[i].Timestamp).Seconds())
 	}
 }
 

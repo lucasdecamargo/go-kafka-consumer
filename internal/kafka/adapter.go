@@ -3,6 +3,7 @@ package kafka
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 
@@ -325,6 +326,7 @@ func mapMessage(km *kafka.Message) types.Message {
 		Key:       km.Key,
 		Value:     km.Value,
 		Timestamp: km.Timestamp,
+		PolledAt:  time.Now(),
 	}
 
 	if km.TopicPartition.Topic != nil {

@@ -40,4 +40,9 @@ type Message struct {
 
 	// Headers contains optional key-value metadata attached to the message.
 	Headers []Header
+
+	// PolledAt is the time the message was received by the poll loop from
+	// Kafka. Used to measure the internal consumer delay (poll-to-completion).
+	// This field is set by the framework, not by the developer.
+	PolledAt time.Time
 }

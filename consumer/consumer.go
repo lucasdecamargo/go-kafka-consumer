@@ -42,6 +42,7 @@ import (
 
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/kafka"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/metrics"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/offset"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/pollloop"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/server"
@@ -100,6 +101,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 	logger := c.opts.logger
 	reg := c.opts.registerer
 
+	// Register all Prometheus metrics.
+	plMetrics := metrics.NewPollLoopMetrics(reg)
+	dispMetrics := metrics.NewDispatcherMetrics(reg)
+
 	logger.Info("consumer starting",
 		slog.String("group_id", c.cfg.GroupID),
 		slog.Any("topics", c.cfg.Topics),
@@ -134,7 +139,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 
 	// 3. Create Dispatcher based on dispatch mode.
-	disp, err := c.createDispatcher(coord, dlq, logger)
+	disp, err := c.createDispatcher(coord, dlq, dispMetrics, logger)
 	if err != nil {
 		return fmt.Errorf("consumer: create dispatcher: %w", err)
 	}
@@ -167,7 +172,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 	pl, err := pollloop.New(plCfg, adapter, disp, coord, health,
 		pollloop.WithLogger(logger.With(slog.String("component", "poll-loop"))),
-		pollloop.WithMetrics(reg),
+		pollloop.WithMetrics(plMetrics),
 	)
 	if err != nil {
 		_ = adapter.Close()
@@ -226,6 +231,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 func (c *Consumer) createDispatcher(
 	coord offset.Coordinator,
 	dlq *kafka.DLQProducer,
+	dm *metrics.DispatcherMetrics,
 	logger *slog.Logger,
 ) (dispatcher.Dispatcher, error) {
 	dispCfg := dispatcher.Config{
@@ -245,7 +251,7 @@ func (c *Consumer) createDispatcher(
 
 	var dispOpts []dispatcher.UnorderedOption
 	dispOpts = append(dispOpts, dispatcher.WithLogger(dispLogger))
-	dispOpts = append(dispOpts, dispatcher.WithMetrics(c.opts.registerer))
+	dispOpts = append(dispOpts, dispatcher.WithMetrics(dm))
 	if dlq != nil {
 		dispOpts = append(dispOpts, dispatcher.WithDLQProducer(dlq))
 	}

@@ -3,16 +3,15 @@ package pollloop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-
-	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/metrics"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/offset"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
 
 // PollLoop is the central orchestrator that ties together the Kafka
@@ -49,11 +48,7 @@ type PollLoop struct {
 	pausedPartitions map[int32]bool
 
 	// Prometheus metrics.
-	messagesTotal       prometheus.Counter
-	pollErrorsTotal     prometheus.Counter
-	commitsTotal        prometheus.Counter
-	commitFailuresTotal prometheus.Counter
-	degradedModeGauge   prometheus.Gauge
+	m *metrics.PollLoopMetrics
 }
 
 // New creates a new PollLoop with the given required dependencies and
@@ -85,7 +80,9 @@ func New(
 		opt(&o)
 	}
 
-	reg := o.registerer
+	if o.metrics == nil {
+		return nil, errors.New("pollloop: metrics must not be nil")
+	}
 
 	pl := &PollLoop{
 		cfg:              cfg,
@@ -95,27 +92,7 @@ func New(
 		health:           health,
 		logger:           o.logger,
 		pausedPartitions: make(map[int32]bool),
-
-		messagesTotal: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-			Name: MetricPollLoopMessagesTotal,
-			Help: "Total number of messages received from Kafka.",
-		}),
-		pollErrorsTotal: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-			Name: MetricPollLoopPollErrorsTotal,
-			Help: "Total number of Poll() errors.",
-		}),
-		commitsTotal: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-			Name: MetricPollLoopCommitsTotal,
-			Help: "Total number of successful offset commits.",
-		}),
-		commitFailuresTotal: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-			Name: MetricPollLoopCommitFailuresTotal,
-			Help: "Total number of failed offset commits.",
-		}),
-		degradedModeGauge: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-			Name: MetricPollLoopDegradedMode,
-			Help: "Whether the poll loop is in degraded mode (1=degraded, 0=normal).",
-		}),
+		m:                o.metrics,
 	}
 
 	return pl, nil
@@ -173,7 +150,7 @@ func (pl *PollLoop) poll(ctx context.Context) {
 		_, err := pl.kafka.Poll(int(pl.cfg.PollInterval.Milliseconds()))
 		if err != nil {
 			pl.logger.Debug("poll error in degraded mode", slog.String("error", err.Error()))
-			pl.pollErrorsTotal.Inc()
+			pl.m.PollErrors.Inc()
 		}
 		return
 	}
@@ -181,7 +158,7 @@ func (pl *PollLoop) poll(ctx context.Context) {
 	msgs, err := pl.kafka.Poll(int(pl.cfg.PollInterval.Milliseconds()))
 	if err != nil {
 		pl.logger.Warn("poll error", slog.String("error", err.Error()))
-		pl.pollErrorsTotal.Inc()
+		pl.m.PollErrors.Inc()
 		return
 	}
 
@@ -189,7 +166,10 @@ func (pl *PollLoop) poll(ctx context.Context) {
 		return
 	}
 
-	pl.messagesTotal.Add(float64(len(msgs)))
+	// Record per-partition message counts.
+	for partition, partMsgs := range groupByPartition(msgs) {
+		pl.m.MessagesPolled.WithLabelValues(fmt.Sprintf("%d", partition)).Add(float64(len(partMsgs)))
+	}
 
 	// Group messages by partition.
 	grouped := groupByPartition(msgs)
@@ -231,7 +211,7 @@ func (pl *PollLoop) commitOffsets() {
 	err := pl.kafka.CommitOffsets(offsets)
 	if err != nil {
 		pl.commitFailures++
-		pl.commitFailuresTotal.Inc()
+		pl.m.CommitFailures.Inc()
 		pl.logger.Warn("commit offsets failed",
 			slog.Int("consecutive_failures", pl.commitFailures),
 			slog.Int("threshold", pl.cfg.CommitFailureThreshold),
@@ -251,7 +231,13 @@ func (pl *PollLoop) commitOffsets() {
 		)
 	}
 	pl.commitFailures = 0
-	pl.commitsTotal.Inc()
+
+	// Record per-partition commit metrics.
+	for part, off := range offsets {
+		pLabel := fmt.Sprintf("%d", part)
+		pl.m.Commits.WithLabelValues(pLabel).Inc()
+		pl.m.LastCommittedOffset.WithLabelValues(pLabel).Set(float64(off))
+	}
 
 	// If we were degraded due to broker unavailability, clear it.
 	if pl.degraded.Has(BrokerUnavailable) {
@@ -310,7 +296,7 @@ func (pl *PollLoop) enterDegradedMode(reason DegradedReason) {
 		// First reason — apply degraded mode behavior.
 		pl.pauseAllPartitions()
 		pl.health.SetReady(false)
-		pl.degradedModeGauge.Set(1)
+		pl.m.DegradedMode.Set(1)
 	}
 }
 
@@ -329,7 +315,7 @@ func (pl *PollLoop) exitDegradedMode(reason DegradedReason) {
 		pl.logger.Info("exiting degraded mode — all reasons cleared")
 		pl.resumeAllPartitions()
 		pl.health.SetReady(true)
-		pl.degradedModeGauge.Set(0)
+		pl.m.DegradedMode.Set(0)
 	}
 }
 
@@ -348,6 +334,7 @@ func (pl *PollLoop) pausePartition(partition int32) {
 	}
 
 	pl.pausedPartitions[partition] = true
+	pl.m.PartitionsPaused.Inc()
 	pl.logger.Debug("partition paused (backpressure)",
 		slog.Int("partition", int(partition)),
 	)
@@ -378,6 +365,7 @@ func (pl *PollLoop) pauseAllPartitions() {
 			slog.String("error", err.Error()),
 		)
 	}
+	pl.m.PartitionsPaused.Set(float64(len(partitions)))
 }
 
 // resumeAllPartitions resumes all assigned partitions. Used when
@@ -407,6 +395,7 @@ func (pl *PollLoop) resumeAllPartitions() {
 	}
 
 	// Clear the backpressure pause tracking too.
+	pl.m.PartitionsPaused.Set(0)
 	for k := range pl.pausedPartitions {
 		delete(pl.pausedPartitions, k)
 	}
@@ -431,6 +420,7 @@ func (pl *PollLoop) resumeAllPausedPartitions() {
 		return
 	}
 
+	pl.m.PartitionsPaused.Sub(float64(len(partitions)))
 	for _, p := range partitions {
 		delete(pl.pausedPartitions, p)
 	}
@@ -446,6 +436,7 @@ func (pl *PollLoop) OnPartitionsAssigned(partitions []dispatcher.Partition) {
 	pl.logger.Info("partitions assigned",
 		slog.Int("count", len(partitions)),
 	)
+	pl.m.PartitionsAssigned.Add(float64(len(partitions)))
 	pl.dispatcher.OnPartitionsAssigned(partitions)
 }
 
@@ -456,6 +447,9 @@ func (pl *PollLoop) OnPartitionsRevoked(partitions []dispatcher.Partition) {
 	pl.logger.Info("partitions revoked",
 		slog.Int("count", len(partitions)),
 	)
+
+	pl.m.Rebalances.Inc()
+	pl.m.PartitionsAssigned.Sub(float64(len(partitions)))
 
 	// 1. Notify Dispatcher — drains in-flight batches for revoked partitions.
 	pl.dispatcher.OnPartitionsRevoked(partitions)

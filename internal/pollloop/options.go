@@ -3,21 +3,20 @@ package pollloop
 import (
 	"log/slog"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/metrics"
 )
 
 // Option configures optional dependencies for the poll loop.
 type Option func(*options)
 
 type options struct {
-	logger     *slog.Logger
-	registerer prometheus.Registerer
+	logger  *slog.Logger
+	metrics *metrics.PollLoopMetrics
 }
 
 func defaultOptions() options {
 	return options{
-		logger:     slog.Default(),
-		registerer: prometheus.DefaultRegisterer,
+		logger: slog.Default(),
 	}
 }
 
@@ -28,9 +27,10 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
-// WithMetrics sets the Prometheus registerer for the poll loop.
-func WithMetrics(reg prometheus.Registerer) Option {
+// WithMetrics sets the poll loop metrics struct. Created via
+// metrics.NewPollLoopMetrics(reg).
+func WithMetrics(m *metrics.PollLoopMetrics) Option {
 	return func(o *options) {
-		o.registerer = reg
+		o.metrics = m
 	}
 }

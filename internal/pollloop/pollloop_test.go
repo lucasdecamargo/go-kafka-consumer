@@ -13,6 +13,7 @@ import (
 
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/circuit"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/metrics"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
 
@@ -253,7 +254,7 @@ func newTestPollLoop(
 		coord,
 		h,
 		WithLogger(discardLogger()),
-		WithMetrics(reg),
+		WithMetrics(metrics.NewPollLoopMetrics(reg)),
 	)
 	if err != nil {
 		panic(err)
@@ -276,38 +277,38 @@ func runFor(t *testing.T, pl *PollLoop, d time.Duration) {
 
 func TestNew_RequiredDependencies(t *testing.T) {
 	h := &Health{}
-	reg := prometheus.NewRegistry()
+	m := metrics.NewPollLoopMetrics(prometheus.NewRegistry())
 	cfg := testConfig()
 	kafka := newMockKafka()
 	disp := newMockDispatcher()
 	coord := newMockCoordinator()
 
 	// All valid.
-	_, err := New(cfg, kafka, disp, coord, h, WithMetrics(reg))
+	_, err := New(cfg, kafka, disp, coord, h, WithMetrics(m))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Missing kafka.
-	_, err = New(cfg, nil, disp, coord, h, WithMetrics(reg))
+	_, err = New(cfg, nil, disp, coord, h, WithMetrics(m))
 	if err == nil {
 		t.Fatal("expected error for nil kafka")
 	}
 
 	// Missing dispatcher.
-	_, err = New(cfg, kafka, nil, coord, h, WithMetrics(reg))
+	_, err = New(cfg, kafka, nil, coord, h, WithMetrics(m))
 	if err == nil {
 		t.Fatal("expected error for nil dispatcher")
 	}
 
 	// Missing coordinator.
-	_, err = New(cfg, kafka, disp, nil, h, WithMetrics(reg))
+	_, err = New(cfg, kafka, disp, nil, h, WithMetrics(m))
 	if err == nil {
 		t.Fatal("expected error for nil coordinator")
 	}
 
 	// Missing health.
-	_, err = New(cfg, kafka, disp, coord, nil, WithMetrics(reg))
+	_, err = New(cfg, kafka, disp, coord, nil, WithMetrics(m))
 	if err == nil {
 		t.Fatal("expected error for nil health")
 	}
@@ -780,7 +781,7 @@ func TestShutdownTimeout_DispatcherSlowDrain(t *testing.T) {
 
 	pl, err := New(cfg, kafka, disp, coord, h,
 		WithLogger(discardLogger()),
-		WithMetrics(reg),
+		WithMetrics(metrics.NewPollLoopMetrics(reg)),
 	)
 	if err != nil {
 		t.Fatal(err)
