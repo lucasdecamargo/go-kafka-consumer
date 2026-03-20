@@ -200,25 +200,26 @@ Test with processor latencies: 0 ms (throughput ceiling), 1 ms, 5 ms, 10 ms, 50 
 
 ## File Structure
 
+Layer 1 microbenchmarks live in-package as `bench_test.go` files so they can access unexported symbols (idiomatic Go convention). Shared benchmark helpers are in `internal/benchutil/`. Layer 2 E2E benchmarks live in `benchmarks/e2e/` and use the public consumer API.
+
 ```
+internal/
+├── benchutil/                    # Shared benchmark helpers (message generators, no-op impls)
+│   └── helpers.go
+├── dispatcher/
+│   └── bench_test.go             # Dispatcher microbenchmarks (assembly, dispatch, channel)
+├── offset/
+│   └── bench_test.go             # Offset coordinator microbenchmarks (cycle, committable)
 benchmarks/
-├── micro/                    # Layer 1: Go microbenchmarks (go test -bench)
-│   ├── dispatcher_bench_test.go
-│   ├── worker_bench_test.go
-│   ├── channel_bench_test.go
-│   └── message_bench_test.go
-├── e2e/                      # Layer 2: End-to-end benchmarks
-│   ├── throughput_bench_test.go
-│   ├── latency_bench_test.go
-│   ├── scaling_bench_test.go
-│   └── testdata/
-│       └── bench_config.yaml
-├── docker-compose.bench.yml  # 3-broker KRaft cluster for e2e benchmarks
+├── e2e/                          # Layer 2: End-to-end benchmarks (build tag: e2ebench)
+│   ├── bench_test.go             # Throughput sweeps (msg size, workers, batch, latency, channel)
+│   └── helpers_test.go           # Cluster setup, message production, consumer runner
+├── docker-compose.bench.yml      # 3-broker KRaft cluster for e2e benchmarks
 ├── scripts/
-│   ├── run_micro.sh          # Run microbenchmarks and generate benchstat report
-│   ├── run_e2e.sh            # Run e2e benchmarks against the Docker cluster
-│   └── compare.sh            # Compare two benchmark runs with benchstat
-└── results/                  # Benchmark result files (gitignored)
+│   ├── run_micro.sh              # Run all microbenchmarks, produce benchstat output
+│   ├── run_e2e.sh                # Start cluster + run e2e benchmarks
+│   └── compare.sh                # Compare two benchmark runs with benchstat
+└── results/                      # Benchmark result files (gitignored)
     └── .gitkeep
 ```
 
