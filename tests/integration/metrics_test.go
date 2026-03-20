@@ -13,10 +13,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
+	"errors"
+
 	"github.com/lucasdecamargo/go-kafka-consumer/consumer"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/kafkatest"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/metrics"
-	"errors"
 )
 
 // --------------------------------------------------------------------------
@@ -35,29 +36,6 @@ func getCounterValue(t *testing.T, g prometheus.Gatherer, name string, labels ..
 func getGaugeValue(t *testing.T, g prometheus.Gatherer, name string, labels ...string) float64 {
 	t.Helper()
 	return getMetricValue(t, g, name, labels...)
-}
-
-// getHistogramCount returns the sample count of a histogram metric.
-func getHistogramCount(t *testing.T, g prometheus.Gatherer, name string, labels ...string) uint64 {
-	t.Helper()
-	families, err := g.Gather()
-	if err != nil {
-		t.Fatalf("gather metrics: %v", err)
-	}
-	lMap := labelsToMap(labels)
-	for _, f := range families {
-		if f.GetName() != name {
-			continue
-		}
-		for _, m := range f.GetMetric() {
-			if matchLabels(m, lMap) {
-				if h := m.GetHistogram(); h != nil {
-					return h.GetSampleCount()
-				}
-			}
-		}
-	}
-	return 0
 }
 
 // getMetricValue reads the numeric value of a counter or gauge.
