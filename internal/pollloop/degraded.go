@@ -1,13 +1,15 @@
 // Package pollloop contains the poll loop implementation and related types.
 package pollloop
 
+import "sync/atomic"
+
 // DegradedReason is a bitmask that tracks why the service is in degraded mode.
 // Multiple reasons can be active simultaneously. The service exits degraded
 // mode only when all reasons are cleared.
 //
 // See ADR-0006 (broker unavailability) and ADR-0007 (target unavailability)
 // for the unified degraded mode design.
-type DegradedReason uint8
+type DegradedReason uint32
 
 const (
 	// BrokerUnavailable indicates the Kafka broker is unreachable.
@@ -22,33 +24,46 @@ const (
 )
 
 // DegradedState tracks the current set of active degraded reasons.
+// All methods are safe for concurrent use.
 type DegradedState struct {
-	reasons DegradedReason
+	reasons atomic.Uint32
 }
 
 // Set adds a degraded reason to the current state.
 func (d *DegradedState) Set(reason DegradedReason) {
-	d.reasons |= reason
+	for {
+		old := d.reasons.Load()
+		new := old | uint32(reason)
+		if d.reasons.CompareAndSwap(old, new) {
+			return
+		}
+	}
 }
 
 // Clear removes a degraded reason from the current state.
 func (d *DegradedState) Clear(reason DegradedReason) {
-	d.reasons &^= reason
+	for {
+		old := d.reasons.Load()
+		new := old &^ uint32(reason)
+		if d.reasons.CompareAndSwap(old, new) {
+			return
+		}
+	}
 }
 
 // IsDegraded reports whether any degraded reason is currently active.
 func (d *DegradedState) IsDegraded() bool {
-	return d.reasons != 0
+	return d.reasons.Load() != 0
 }
 
 // Has reports whether a specific degraded reason is currently active.
 func (d *DegradedState) Has(reason DegradedReason) bool {
-	return d.reasons&reason != 0
+	return d.reasons.Load()&uint32(reason) != 0
 }
 
 // Reasons returns the current bitmask of active degraded reasons.
 func (d *DegradedState) Reasons() DegradedReason {
-	return d.reasons
+	return DegradedReason(d.reasons.Load())
 }
 
 // String returns a human-readable representation of all active reasons.

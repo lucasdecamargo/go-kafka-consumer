@@ -288,10 +288,10 @@ func (d *UnorderedDispatcher) Close(ctx context.Context) error {
 		}
 		d.lingerMu.Unlock()
 	}
-	d.mu.Unlock()
-
-	// Close the batch channel so workers drain and exit.
+	// Close the batch channel while still holding mu so that
+	// dispatchBatch's closed check + channel send cannot race.
 	close(d.batchCh)
+	d.mu.Unlock()
 
 	// Wait for workers, bounded by context deadline.
 	done := make(chan struct{})
@@ -368,8 +368,16 @@ func (d *UnorderedDispatcher) assembleBatch(pb *partitionBuffer, partition int32
 }
 
 // dispatchBatch sends a batch to the worker channel. Returns ErrBackpressure
-// if the channel is full.
+// if the channel is full, or an error if the dispatcher has been closed.
 func (d *UnorderedDispatcher) dispatchBatch(_ context.Context, b batch) error {
+	// Check closed before sending — prevents send on closed channel.
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return errors.New("dispatcher: closed")
+	}
+	d.mu.Unlock()
+
 	d.coordinator.BatchDispatched(b.partition, b.maxOffset)
 
 	select {

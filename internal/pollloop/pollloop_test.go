@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,14 +96,14 @@ func (m *mockKafka) Close() error {
 // ---------------------------------------------------------------------------
 
 type mockDispatcher struct {
-	mu                sync.Mutex
-	sendFn            func(ctx context.Context, partition int32, msgs []types.Message) error
-	readyCh           chan struct{}
-	circuitCh         chan circuit.State
-	assignedCalls     [][]dispatcher.Partition
-	revokedCalls      [][]dispatcher.Partition
-	closeFn           func(ctx context.Context) error
-	sendCalls         []sendCall
+	mu            sync.Mutex
+	sendFn        func(ctx context.Context, partition int32, msgs []types.Message) error
+	readyCh       chan struct{}
+	circuitCh     chan circuit.State
+	assignedCalls [][]dispatcher.Partition
+	revokedCalls  [][]dispatcher.Partition
+	closeFn       func(ctx context.Context) error
+	sendCalls     []sendCall
 }
 
 type sendCall struct {
@@ -867,11 +868,11 @@ func TestDegradedMode_SkipsDispatchButKeepsPoll(t *testing.T) {
 	disp := newMockDispatcher()
 	coord := newMockCoordinator()
 
-	var pollCount int
+	var pollCount atomic.Int64
 	kafka.pollFn = func(int) ([]types.Message, error) {
-		pollCount++
+		n := pollCount.Add(1)
 		return []types.Message{
-			{Partition: 0, Offset: int64(pollCount), Value: []byte("x")},
+			{Partition: 0, Offset: n, Value: []byte("x")},
 		}, nil
 	}
 
@@ -908,8 +909,8 @@ func TestDegradedMode_SkipsDispatchButKeepsPoll(t *testing.T) {
 	}
 
 	// But poll was still called (session keepalive).
-	if pollCount < 5 {
-		t.Errorf("expected Poll to continue during degraded mode, count=%d", pollCount)
+	if pollCount.Load() < 5 {
+		t.Errorf("expected Poll to continue during degraded mode, count=%d", pollCount.Load())
 	}
 
 	cancel()
@@ -941,21 +942,21 @@ func TestCommitFailureCounter_ResetsOnSuccess(t *testing.T) {
 		done <- pl.Run(ctx)
 	}()
 
-	// Wait long enough for commits to cycle.
+	// Wait long enough for commits to cycle, then shut down.
 	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
 
+	// Check after Run returns to avoid racing on internal state.
 	// Should not have entered degraded mode (threshold=3, only 2 consecutive failures).
 	if pl.degraded.Has(BrokerUnavailable) {
 		t.Error("should not have entered degraded mode with only 2 consecutive failures")
 	}
 
-	// Counter should be reset.
+	// Counter should be reset after the successful commit.
 	if pl.commitFailures != 0 {
 		t.Errorf("expected commit failures counter to be 0, got %d", pl.commitFailures)
 	}
-
-	cancel()
-	<-done
 }
 
 func TestHalfOpen_StaysDegraded(t *testing.T) {
