@@ -1,0 +1,23 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          release-type: go
+          # Starts at 0.1.0 — bump to 1.0.0 when the API is stable.
+          # Release Please reads conventional commit prefixes:
+          #   feat:  → minor bump
+          #   fix:   → patch bump
+          #   feat!: → major bump (or "BREAKING CHANGE" in commit body)

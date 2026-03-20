@@ -1,0 +1,70 @@
+name: Benchmark Regression
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  benchmark:
+    name: Microbenchmark Comparison
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run benchmarks on PR branch
+        run: >
+          go test
+          -bench=.
+          -benchmem
+          -count=5
+          -timeout=10m
+          -run=^$
+          ./internal/dispatcher/
+          ./internal/offset/
+          | tee pr-bench.txt
+
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Run benchmarks on base branch
+        working-directory: base
+        run: >
+          go test
+          -bench=.
+          -benchmem
+          -count=5
+          -timeout=10m
+          -run=^$
+          ./internal/dispatcher/
+          ./internal/offset/
+          | tee ../base-bench.txt
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Compare benchmarks
+        run: |
+          echo '## Benchmark Comparison' > bench-report.md
+          echo '' >> bench-report.md
+          echo 'Comparing `main` (base) → this PR. Negative deltas = improvement.' >> bench-report.md
+          echo '' >> bench-report.md
+          echo '```' >> bench-report.md
+          benchstat base-bench.txt pr-bench.txt >> bench-report.md 2>&1 || true
+          echo '```' >> bench-report.md
+
+      - name: Post benchmark comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: benchmark
+          path: bench-report.md

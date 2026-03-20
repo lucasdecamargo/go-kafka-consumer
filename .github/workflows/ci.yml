@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit tests with coverage
+        run: >
+          go test
+          -race
+          -coverprofile=coverage.out
+          -covermode=atomic
+          -timeout=120s
+          ./...
+
+      - name: Upload coverage to Codecov
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+          flags: unit
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run integration tests
+        run: >
+          go test
+          -tags integration
+          -race
+          -coverprofile=coverage-integration.out
+          -covermode=atomic
+          -timeout=300s
+          ./tests/integration/
+
+      - name: Upload coverage to Codecov
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage-integration.out
+          flags: integration
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
