@@ -19,7 +19,15 @@ jobs:
       - uses: googleapis/release-please-action@v4
         with:
           release-type: go
-          # Starts at 0.1.0 — bump to 1.0.0 when the API is stable.
+          # Use a PAT so the release PR triggers pull_request workflows (CI,
+          # lint, benchmark). With the default GITHUB_TOKEN, GitHub blocks
+          # workflow runs on bot-created PRs to prevent loops.
+          # Create a fine-grained PAT with "contents: write" and
+          # "pull-requests: write" scopes, then add it as the
+          # RELEASE_PLEASE_TOKEN repository secret.
+          # Falls back to GITHUB_TOKEN if the secret is not set (workflows
+          # will not run on the release PR in that case).
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           # Release Please reads conventional commit prefixes:
           #   feat:  → minor bump
           #   fix:   → patch bump
