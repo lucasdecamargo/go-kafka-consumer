@@ -113,28 +113,28 @@ func newDispatcher(cfg DispatcherConfig, opts dispatcherOptions) *Dispatcher {
 }
 ```
 
-**Metric names are defined as constants** in a dedicated file (e.g., `metrics.go` per package or a central `metrics` package), not inline strings:
+**Metric names are defined as constants** in the central `internal/metrics` package, not inline strings:
 
 ```go
-// metrics.go
+// internal/metrics/pollloop.go, internal/metrics/dispatcher.go
 const (
-    MetricDispatcherBatchesTotal          = "kafka_consumer_dispatcher_batches_total"
-    MetricDispatcherBatchLatencySeconds   = "kafka_consumer_dispatcher_batch_latency_seconds"
-    MetricDispatcherQueueDepth            = "kafka_consumer_dispatcher_queue_depth"
-    MetricDispatcherCircuitBreakerState   = "kafka_consumer_dispatcher_circuit_breaker_state"
+    MessagesPolledTotal    = "kafka_consumer_messages_polled_total"
+    CommitsTotal           = "kafka_consumer_commits_total"
+    CommitFailuresTotal    = "kafka_consumer_commit_failures_total"
+    DegradedMode           = "kafka_consumer_degraded_mode"
 
-    MetricPollLoopMessagesTotal           = "kafka_consumer_poll_loop_messages_total"
-    MetricPollLoopCommitsTotal            = "kafka_consumer_poll_loop_commits_total"
-    MetricPollLoopCommitFailuresTotal     = "kafka_consumer_poll_loop_commit_failures_total"
-    MetricPollLoopDegradedMode            = "kafka_consumer_poll_loop_degraded_mode"
+    MessagesProcessedTotal = "kafka_consumer_messages_processed_total"
+    MessageDelaySeconds    = "kafka_consumer_message_delay_seconds"
+    CircuitBreakerState    = "kafka_consumer_circuit_breaker_state"
     // ...
 )
 ```
 
 **Naming conventions** follow Prometheus best practices:
 - Prefix: `kafka_consumer_` (project namespace).
-- Component: `dispatcher_`, `poll_loop_`, `offset_coordinator_`.
+- No component segment — metric names are self-descriptive without encoding internal architecture.
 - Suffix: `_total` for counters, `_seconds` for durations, no suffix for gauges.
+- See `docs/metrics.md` for the full metrics reference.
 
 **Default behavior**: If no `WithMetrics` is provided, the default `prometheus.DefaultRegisterer` is used. Components can also check for a nil registerer to disable metrics entirely in unit tests if needed.
 

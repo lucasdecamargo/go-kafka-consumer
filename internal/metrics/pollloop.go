@@ -7,15 +7,15 @@ import (
 
 // Poll loop metric name constants.
 const (
-	PollLoopMessagesPolledTotal   = "kafka_consumer_poll_loop_messages_polled_total"
-	PollLoopPollErrorsTotal       = "kafka_consumer_poll_loop_poll_errors_total"
-	PollLoopCommitsTotal          = "kafka_consumer_poll_loop_commits_total"
-	PollLoopCommitFailuresTotal   = "kafka_consumer_poll_loop_commit_failures_total"
-	PollLoopDegradedMode          = "kafka_consumer_poll_loop_degraded_mode"
-	PollLoopPartitionsAssigned    = "kafka_consumer_poll_loop_partitions_assigned"
-	PollLoopRebalancesTotal       = "kafka_consumer_poll_loop_rebalances_total"
-	PollLoopLastCommittedOffset   = "kafka_consumer_poll_loop_last_committed_offset"
-	PollLoopPartitionsPaused      = "kafka_consumer_poll_loop_partitions_paused"
+	MessagesPolledTotal   = "kafka_consumer_messages_polled_total"
+	PollErrorsTotal       = "kafka_consumer_poll_errors_total"
+	CommitsTotal          = "kafka_consumer_commits_total"
+	CommitFailuresTotal   = "kafka_consumer_commit_failures_total"
+	DegradedMode          = "kafka_consumer_degraded_mode"
+	PartitionsAssigned    = "kafka_consumer_partitions_assigned"
+	RebalancesTotal       = "kafka_consumer_rebalances_total"
+	LastCommittedOffset   = "kafka_consumer_last_committed_offset"
+	PartitionsPaused      = "kafka_consumer_partitions_paused"
 )
 
 // PollLoopMetrics holds all Prometheus metrics for the poll loop component.
@@ -59,47 +59,47 @@ type PollLoopMetrics struct {
 func NewPollLoopMetrics(reg prometheus.Registerer) *PollLoopMetrics {
 	return &PollLoopMetrics{
 		MessagesPolled: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-			Name: PollLoopMessagesPolledTotal,
+			Name: MessagesPolledTotal,
 			Help: "Total messages received from Kafka, per partition.",
 		}, []string{"partition"}),
 
 		PollErrors: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-			Name: PollLoopPollErrorsTotal,
+			Name: PollErrorsTotal,
 			Help: "Total Poll() errors.",
 		}),
 
 		Commits: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-			Name: PollLoopCommitsTotal,
+			Name: CommitsTotal,
 			Help: "Total successful offset commits, per partition.",
 		}, []string{"partition"}),
 
 		CommitFailures: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-			Name: PollLoopCommitFailuresTotal,
+			Name: CommitFailuresTotal,
 			Help: "Total failed offset commits.",
 		}),
 
 		DegradedMode: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-			Name: PollLoopDegradedMode,
+			Name: DegradedMode,
 			Help: "Whether the poll loop is in degraded mode (1=degraded, 0=normal).",
 		}),
 
 		PartitionsAssigned: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-			Name: PollLoopPartitionsAssigned,
+			Name: PartitionsAssigned,
 			Help: "Number of partitions currently assigned to this consumer instance.",
 		}),
 
 		Rebalances: promauto.With(reg).NewCounter(prometheus.CounterOpts{
-			Name: PollLoopRebalancesTotal,
+			Name: RebalancesTotal,
 			Help: "Total rebalance events (incremented on each revoke).",
 		}),
 
 		LastCommittedOffset: promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-			Name: PollLoopLastCommittedOffset,
+			Name: LastCommittedOffset,
 			Help: "Last successfully committed offset per partition.",
 		}, []string{"partition"}),
 
 		PartitionsPaused: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-			Name: PollLoopPartitionsPaused,
+			Name: PartitionsPaused,
 			Help: "Number of partitions currently paused due to backpressure or degraded mode.",
 		}),
 	}

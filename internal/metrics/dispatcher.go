@@ -7,14 +7,14 @@ import (
 
 // Dispatcher metric name constants.
 const (
-	DispatcherMessagesProcessedTotal = "kafka_consumer_dispatcher_messages_processed_total"
-	DispatcherMessageDelaySeconds    = "kafka_consumer_dispatcher_message_delay_seconds"
-	DispatcherProcessingTimeSeconds  = "kafka_consumer_dispatcher_processing_time_seconds"
-	DispatcherRecordAgeSeconds       = "kafka_consumer_dispatcher_record_age_seconds"
-	DispatcherInflightMessages       = "kafka_consumer_dispatcher_inflight_messages"
-	DispatcherCircuitBreakerState    = "kafka_consumer_dispatcher_circuit_breaker_state"
-	DispatcherWorkersActive          = "kafka_consumer_dispatcher_workers_active"
-	DispatcherDLQMessagesTotal       = "kafka_consumer_dispatcher_dlq_messages_total"
+	MessagesProcessedTotal = "kafka_consumer_messages_processed_total"
+	MessageDelaySeconds    = "kafka_consumer_message_delay_seconds"
+	ProcessingTimeSeconds  = "kafka_consumer_processing_time_seconds"
+	RecordAgeSeconds       = "kafka_consumer_record_age_seconds"
+	InflightMessages       = "kafka_consumer_inflight_messages"
+	CircuitBreakerState    = "kafka_consumer_circuit_breaker_state"
+	WorkersActive          = "kafka_consumer_workers_active"
+	DLQMessagesTotal       = "kafka_consumer_dlq_messages_total"
 )
 
 // Dispatcher metric label values.
@@ -66,45 +66,45 @@ type DispatcherMetrics struct {
 func NewDispatcherMetrics(reg prometheus.Registerer) *DispatcherMetrics {
 	return &DispatcherMetrics{
 		MessagesProcessed: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-			Name: DispatcherMessagesProcessedTotal,
+			Name: MessagesProcessedTotal,
 			Help: "Total messages processed, labeled by outcome and partition.",
 		}, []string{"status", "partition"}),
 
 		MessageDelay: promauto.With(reg).NewHistogramVec(prometheus.HistogramOpts{
-			Name:    DispatcherMessageDelaySeconds,
+			Name:    MessageDelaySeconds,
 			Help:    "Time from poll to processing completion per message.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"partition"}),
 
 		ProcessingTime: promauto.With(reg).NewHistogramVec(prometheus.HistogramOpts{
-			Name:    DispatcherProcessingTimeSeconds,
+			Name:    ProcessingTimeSeconds,
 			Help:    "Processor function execution time per batch.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"partition"}),
 
 		RecordAge: promauto.With(reg).NewHistogramVec(prometheus.HistogramOpts{
-			Name:    DispatcherRecordAgeSeconds,
+			Name:    RecordAgeSeconds,
 			Help:    "End-to-end latency from message production to processing completion.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"partition"}),
 
 		InflightMessages: promauto.With(reg).NewGaugeVec(prometheus.GaugeOpts{
-			Name: DispatcherInflightMessages,
+			Name: InflightMessages,
 			Help: "Messages currently buffered in worker channels or being processed, per partition.",
 		}, []string{"partition"}),
 
 		CircuitBreakerState: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-			Name: DispatcherCircuitBreakerState,
+			Name: CircuitBreakerState,
 			Help: "Current circuit breaker state: 0=closed, 1=half-open, 2=open.",
 		}),
 
 		WorkersActive: promauto.With(reg).NewGauge(prometheus.GaugeOpts{
-			Name: DispatcherWorkersActive,
+			Name: WorkersActive,
 			Help: "Number of workers currently processing a batch.",
 		}),
 
 		DLQMessages: promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-			Name: DispatcherDLQMessagesTotal,
+			Name: DLQMessagesTotal,
 			Help: "Total messages sent to the dead letter queue, labeled by reason and partition.",
 		}, []string{"reason", "partition"}),
 	}

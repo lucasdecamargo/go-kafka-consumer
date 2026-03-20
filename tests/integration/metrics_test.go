@@ -215,20 +215,20 @@ func TestMetrics_MessageThroughput(t *testing.T) {
 	<-runDone
 
 	// Assert messages_polled_total == messageCount (summed across partitions).
-	polled := sumCounterAcrossPartitions(t, reg, metrics.PollLoopMessagesPolledTotal)
+	polled := sumCounterAcrossPartitions(t, reg, metrics.MessagesPolledTotal)
 	if polled != float64(messageCount) {
 		t.Errorf("messages_polled_total = %v, want %v", polled, messageCount)
 	}
 
 	// Assert messages_processed_total{status="success"} == messageCount.
 	processedMetric := sumCounterAcrossPartitions(t, reg,
-		metrics.DispatcherMessagesProcessedTotal, "status", "success")
+		metrics.MessagesProcessedTotal, "status", "success")
 	if processedMetric != float64(messageCount) {
 		t.Errorf("messages_processed_total{success} = %v, want %v", processedMetric, messageCount)
 	}
 
 	// Assert partition label is present (partition "0" since 1 partition).
-	p0Polled := getCounterValue(t, reg, metrics.PollLoopMessagesPolledTotal, "partition", "0")
+	p0Polled := getCounterValue(t, reg, metrics.MessagesPolledTotal, "partition", "0")
 	if p0Polled != float64(messageCount) {
 		t.Errorf("messages_polled_total{partition=0} = %v, want %v", p0Polled, messageCount)
 	}
@@ -292,19 +292,19 @@ func TestMetrics_ProcessingLatency(t *testing.T) {
 	<-runDone
 
 	// processing_time_seconds should have observations for all messages.
-	ptCount := sumHistogramCountAcrossPartitions(t, reg, metrics.DispatcherProcessingTimeSeconds)
+	ptCount := sumHistogramCountAcrossPartitions(t, reg, metrics.ProcessingTimeSeconds)
 	if ptCount == 0 {
 		t.Error("processing_time_seconds has no observations")
 	}
 
 	// message_delay_seconds should have one observation per message.
-	mdCount := sumHistogramCountAcrossPartitions(t, reg, metrics.DispatcherMessageDelaySeconds)
+	mdCount := sumHistogramCountAcrossPartitions(t, reg, metrics.MessageDelaySeconds)
 	if mdCount != uint64(messageCount) {
 		t.Errorf("message_delay_seconds count = %d, want %d", mdCount, messageCount)
 	}
 
 	// record_age_seconds should have one observation per message.
-	raCount := sumHistogramCountAcrossPartitions(t, reg, metrics.DispatcherRecordAgeSeconds)
+	raCount := sumHistogramCountAcrossPartitions(t, reg, metrics.RecordAgeSeconds)
 	if raCount != uint64(messageCount) {
 		t.Errorf("record_age_seconds count = %d, want %d", raCount, messageCount)
 	}
@@ -378,20 +378,20 @@ func TestMetrics_DLQCounters(t *testing.T) {
 
 	// Assert non_retryable processed count.
 	nrCount := sumCounterAcrossPartitions(t, reg,
-		metrics.DispatcherMessagesProcessedTotal, "status", "non_retryable")
+		metrics.MessagesProcessedTotal, "status", "non_retryable")
 	if nrCount != float64(messageCount) {
 		t.Errorf("messages_processed{non_retryable} = %v, want %v", nrCount, messageCount)
 	}
 
 	// Assert DLQ counter.
 	dlqCount := sumCounterAcrossPartitions(t, reg,
-		metrics.DispatcherDLQMessagesTotal, "reason", "non_retryable")
+		metrics.DLQMessagesTotal, "reason", "non_retryable")
 	if dlqCount != float64(messageCount) {
 		t.Errorf("dlq_messages_total{non_retryable} = %v, want %v", dlqCount, messageCount)
 	}
 
 	// Assert partition label is present on DLQ counter.
-	dlqP0 := getCounterValue(t, reg, metrics.DispatcherDLQMessagesTotal,
+	dlqP0 := getCounterValue(t, reg, metrics.DLQMessagesTotal,
 		"reason", "non_retryable", "partition", "0")
 	if dlqP0 != float64(messageCount) {
 		t.Errorf("dlq_messages_total{partition=0} = %v, want %v", dlqP0, messageCount)
@@ -445,7 +445,7 @@ func TestMetrics_CircuitBreakerGauge(t *testing.T) {
 	deadline := time.After(15 * time.Second)
 loop:
 	for {
-		cbState := getGaugeValue(t, reg, metrics.DispatcherCircuitBreakerState)
+		cbState := getGaugeValue(t, reg, metrics.CircuitBreakerState)
 		if cbState > maxCBState {
 			maxCBState = cbState
 		}
@@ -530,13 +530,13 @@ func TestMetrics_CommitOffsets(t *testing.T) {
 	<-runDone
 
 	// commits_total should be > 0.
-	commits := sumCounterAcrossPartitions(t, reg, metrics.PollLoopCommitsTotal)
+	commits := sumCounterAcrossPartitions(t, reg, metrics.CommitsTotal)
 	if commits == 0 {
 		t.Error("commits_total = 0, expected > 0")
 	}
 
 	// last_committed_offset{partition="0"} should be == messageCount (next-to-fetch).
-	lastOffset := getGaugeValue(t, reg, metrics.PollLoopLastCommittedOffset, "partition", "0")
+	lastOffset := getGaugeValue(t, reg, metrics.LastCommittedOffset, "partition", "0")
 	if lastOffset != float64(messageCount) {
 		t.Errorf("last_committed_offset{0} = %v, want %v", lastOffset, messageCount)
 	}
@@ -599,7 +599,7 @@ func TestMetrics_InflightMessages(t *testing.T) {
 			case <-allDone:
 				return
 			default:
-				v := getGaugeValue(t, reg, metrics.DispatcherInflightMessages, "partition", "0")
+				v := getGaugeValue(t, reg, metrics.InflightMessages, "partition", "0")
 				mu.Lock()
 				if v > maxInflight {
 					maxInflight = v
@@ -623,7 +623,7 @@ func TestMetrics_InflightMessages(t *testing.T) {
 	<-runDone
 
 	// After shutdown, inflight should be 0.
-	inflight := getGaugeValue(t, reg, metrics.DispatcherInflightMessages, "partition", "0")
+	inflight := getGaugeValue(t, reg, metrics.InflightMessages, "partition", "0")
 	if inflight != 0 {
 		t.Errorf("inflight_messages{0} = %v after shutdown, want 0", inflight)
 	}

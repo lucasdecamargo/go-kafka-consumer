@@ -3,9 +3,10 @@
 // component (poll loop, dispatcher) with factory functions that handle
 // registration against a prometheus.Registerer.
 //
-// This package is the single source of truth for metric names, labels,
-// and help text. The corresponding reference documentation lives in
-// docs/metrics.md.
+// All metrics use the kafka_consumer_ namespace prefix, following the
+// Prometheus convention of {namespace}_{metric}_{unit}. This package is
+// the single source of truth for metric names, labels, and help text.
+// The corresponding reference documentation lives in docs/metrics.md.
 //
 // Usage:
 //
