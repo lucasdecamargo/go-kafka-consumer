@@ -410,15 +410,17 @@ func (d *UnorderedDispatcher) startLingerTimer(ctx context.Context, partition in
 	}
 
 	pb.lingerTimer = time.AfterFunc(d.cfg.LingerTime, func() {
-		d.lingerMu.Lock()
-		// Clear the timer reference since it has fired.
+		// Acquire locks in the canonical order (mu → lingerMu) to
+		// prevent deadlock with tryDispatch, which holds mu and then
+		// acquires lingerMu via assembleBatch or startLingerTimer.
 		d.mu.Lock()
+		d.lingerMu.Lock()
 		lPb, ok := d.partitions[partition]
 		if ok {
 			lPb.lingerTimer = nil
 		}
-		d.mu.Unlock()
 		d.lingerMu.Unlock()
+		d.mu.Unlock()
 
 		d.flushPartition(ctx, partition)
 	})
