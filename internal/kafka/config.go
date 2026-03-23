@@ -64,7 +64,8 @@ func BuildConsumerConfig(cfg AdapterConfig) (*kafka.ConfigMap, error) {
 		"go.application.rebalance.enable": true,
 		// Emit a *kafka.Stats event through Poll() at the configured interval.
 		// Used to derive per-partition consumer lag for Prometheus and KEDA.
-		"statistics.interval.ms": cfg.LagReportInterval.Milliseconds(),
+		// librdkafka expects int (not int64), so we cast explicitly.
+		"statistics.interval.ms": int(cfg.LagReportInterval.Milliseconds()),
 	}
 
 	if err := applySecurity(m, cfg.Security); err != nil {

@@ -652,27 +652,46 @@ func (d *UnorderedDispatcher) sendToDLQ(ctx context.Context, b batch, reason err
 }
 
 // onBatchDone is called after a batch is fully processed (success or DLQ).
-// It marks the partition as no longer in-flight and dispatches the next
-// batch if buffered messages are available. Signals Ready if the channel
-// was at capacity.
+// It marks the partition as no longer in-flight, signals the poll loop that
+// channel capacity is available, and then attempts to dispatch buffered
+// messages for every partition that has pending work.
+//
+// Dispatching all pending partitions (not just the completed one) prevents
+// starvation: if a partition hit ErrBackpressure earlier and had its messages
+// returned to the buffer with inFlight=false, it will only be retried when
+// onBatchDone runs or when new messages arrive via Send(). Iterating all
+// partitions here ensures such a partition is unblocked as soon as capacity
+// is available.
 func (d *UnorderedDispatcher) onBatchDone(ctx context.Context, partition int32) {
 	d.mu.Lock()
-	pb, ok := d.partitions[partition]
-	if ok {
+	if pb, ok := d.partitions[partition]; ok {
 		pb.inFlight = false
 	}
-	hasPending := ok && len(pb.messages) > 0
+	// Snapshot every partition that has buffered, non-in-flight messages.
+	// We collect IDs under the lock and release before calling tryDispatch,
+	// which also acquires d.mu internally.
+	pending := make([]int32, 0, len(d.partitions))
+	for p, pb := range d.partitions {
+		if !pb.inFlight && len(pb.messages) > 0 {
+			pending = append(pending, p)
+		}
+	}
 	d.mu.Unlock()
 
-	// Signal readiness — non-blocking.
+	// Signal readiness — non-blocking. Wakes the poll loop so it can
+	// resume fetching if it is paused on backpressure.
 	select {
 	case d.readyCh <- struct{}{}:
 	default:
 	}
 
-	// Dispatch next batch for this partition if messages are buffered.
-	if hasPending {
-		_ = d.tryDispatch(ctx, partition)
+	// Attempt to drain buffered messages for all waiting partitions.
+	// Stop at the first ErrBackpressure — the channel is full again and
+	// subsequent partitions would fail immediately too.
+	for _, p := range pending {
+		if err := d.tryDispatch(ctx, p); err != nil {
+			break
+		}
 	}
 }
 
