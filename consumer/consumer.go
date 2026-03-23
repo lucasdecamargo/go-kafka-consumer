@@ -104,6 +104,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	// Register all Prometheus metrics.
 	plMetrics := metrics.NewPollLoopMetrics(reg)
 	dispMetrics := metrics.NewDispatcherMetrics(reg)
+	lagMetrics := metrics.NewLagMetrics(reg)
 
 	logger.Info("consumer starting",
 		slog.String("group_id", c.cfg.GroupID),
@@ -157,6 +158,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	kafkaCfg := c.mapKafkaConfig()
 	adapter, err := kafka.NewAdapter(kafkaCfg, fwd,
 		kafka.WithLogger(logger.With(slog.String("component", "kafka-adapter"))),
+		kafka.WithLagMetrics(lagMetrics),
 	)
 	if err != nil {
 		return fmt.Errorf("consumer: create kafka adapter: %w", err)

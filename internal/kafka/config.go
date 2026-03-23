@@ -60,6 +60,9 @@ func BuildConsumerConfig(cfg AdapterConfig) (*kafka.ConfigMap, error) {
 		"partition.assignment.strategy":   "cooperative-sticky",
 		"auto.offset.reset":               "earliest",
 		"go.application.rebalance.enable": true,
+		// Emit a *kafka.Stats event through Poll() every 10 seconds.
+		// Used to derive per-partition consumer lag for Prometheus and KEDA.
+		"statistics.interval.ms": 10000,
 	}
 
 	if err := applySecurity(m, cfg.Security); err != nil {

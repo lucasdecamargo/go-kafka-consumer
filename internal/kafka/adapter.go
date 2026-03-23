@@ -8,6 +8,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/dispatcher"
+	"github.com/lucasdecamargo/go-kafka-consumer/internal/metrics"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/pollloop"
 	"github.com/lucasdecamargo/go-kafka-consumer/internal/types"
 )
@@ -16,17 +17,20 @@ import (
 // pollloop.KafkaConsumer. All methods are called from the single poll
 // loop goroutine; thread safety is not required.
 type Adapter struct {
-	c       *kafka.Consumer
-	handler pollloop.RebalanceHandler
-	topics  []string
-	logger  *slog.Logger
+	c          *kafka.Consumer
+	handler    pollloop.RebalanceHandler
+	topics     []string
+	groupID    string
+	lagMetrics *metrics.LagMetrics
+	logger     *slog.Logger
 }
 
 // AdapterOption configures optional dependencies for the Adapter.
 type AdapterOption func(*adapterOptions)
 
 type adapterOptions struct {
-	logger *slog.Logger
+	logger     *slog.Logger
+	lagMetrics *metrics.LagMetrics
 }
 
 func defaultAdapterOptions() adapterOptions {
@@ -41,6 +45,15 @@ func WithLogger(l *slog.Logger) AdapterOption {
 		if l != nil {
 			o.logger = l
 		}
+	}
+}
+
+// WithLagMetrics wires consumer lag metrics to the adapter. When set, each
+// librdkafka statistics event (fired every statistics.interval.ms) updates
+// the kafka_consumer_lag gauge for all assigned partitions.
+func WithLagMetrics(m *metrics.LagMetrics) AdapterOption {
+	return func(o *adapterOptions) {
+		o.lagMetrics = m
 	}
 }
 
@@ -74,10 +87,12 @@ func NewAdapter(
 	}
 
 	a := &Adapter{
-		c:       c,
-		handler: handler,
-		topics:  cfg.Topics,
-		logger:  o.logger,
+		c:          c,
+		handler:    handler,
+		topics:     cfg.Topics,
+		groupID:    cfg.GroupID,
+		lagMetrics: o.lagMetrics,
+		logger:     o.logger,
 	}
 
 	// Subscribe with rebalance callback.
@@ -152,8 +167,15 @@ func (a *Adapter) handleEvent(ev kafka.Event, msgs *[]types.Message) error {
 		// (authentication failure, etc.) are also returned.
 		return fmt.Errorf("kafka error (code=%s): %w", e.Code().String(), e)
 
+	case *kafka.Stats:
+		// librdkafka emits a stats event every statistics.interval.ms.
+		// Parse it to update the consumer lag gauge if metrics are wired.
+		if a.lagMetrics != nil {
+			a.lagMetrics.Update(a.groupID, e.String())
+		}
+
 	default:
-		// Other events (stats, logs, offsets) are silently ignored.
+		// Other events (logs, offsets, etc.) are silently ignored.
 		// Rebalance events are handled via the rebalance callback,
 		// not via Poll() events.
 	}
