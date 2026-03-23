@@ -91,6 +91,12 @@ type Config struct {
 	// See FR-4.
 	DLQTopic string
 
+	// LagReportInterval controls how often librdkafka emits internal
+	// statistics used to update the kafka_consumer_lag Prometheus gauge.
+	// Lower values increase metric resolution at the cost of slightly more
+	// JSON parsing overhead. Default: 10s.
+	LagReportInterval time.Duration
+
 	// HealthAddr is the TCP address for the health and metrics HTTP server
 	// (e.g., ":8080", "0.0.0.0:9090"). If empty, the server is not started.
 	// Exposes /healthz, /readyz, and /metrics endpoints.
@@ -122,6 +128,7 @@ func DefaultConfig() Config {
 		CBOpenTimeout:          30 * time.Second,
 		CBMaxRequests:          1,
 		CBInterval:             60 * time.Second,
+		LagReportInterval:      10 * time.Second,
 		HealthAddr:             ":8080",
 	}
 }
@@ -180,6 +187,9 @@ func (c *Config) Validate() error {
 	}
 	if c.CBInterval <= 0 {
 		return errors.New("config: circuit breaker interval must be positive")
+	}
+	if c.LagReportInterval <= 0 {
+		return errors.New("config: lag report interval must be positive")
 	}
 	if err := c.Security.Validate(); err != nil {
 		return err

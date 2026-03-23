@@ -283,10 +283,11 @@ func (c *Consumer) createDispatcher(
 // consumer.SecurityConfig to the internal kafka.AdapterConfig.
 func (c *Consumer) mapKafkaConfig() kafka.AdapterConfig {
 	return kafka.AdapterConfig{
-		Brokers:  c.cfg.Brokers,
-		GroupID:  c.cfg.GroupID,
-		Topics:   c.cfg.Topics,
-		Security: c.mapSecurityConfig(),
+		Brokers:           c.cfg.Brokers,
+		GroupID:           c.cfg.GroupID,
+		Topics:            c.cfg.Topics,
+		Security:          c.mapSecurityConfig(),
+		LagReportInterval: c.cfg.LagReportInterval,
 	}
 }
 

@@ -5,6 +5,7 @@ package kafka
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
@@ -13,10 +14,11 @@ import (
 // needed by the adapter. This is an internal representation — the public
 // consumer.Config is mapped to this struct by Consumer.Run().
 type AdapterConfig struct {
-	Brokers  []string
-	GroupID  string
-	Topics   []string
-	Security SecurityConfig
+	Brokers           []string
+	GroupID           string
+	Topics            []string
+	Security          SecurityConfig
+	LagReportInterval time.Duration
 }
 
 // SecurityConfig mirrors the security settings needed by the Kafka
@@ -60,9 +62,9 @@ func BuildConsumerConfig(cfg AdapterConfig) (*kafka.ConfigMap, error) {
 		"partition.assignment.strategy":   "cooperative-sticky",
 		"auto.offset.reset":               "earliest",
 		"go.application.rebalance.enable": true,
-		// Emit a *kafka.Stats event through Poll() every 10 seconds.
+		// Emit a *kafka.Stats event through Poll() at the configured interval.
 		// Used to derive per-partition consumer lag for Prometheus and KEDA.
-		"statistics.interval.ms": 10000,
+		"statistics.interval.ms": cfg.LagReportInterval.Milliseconds(),
 	}
 
 	if err := applySecurity(m, cfg.Security); err != nil {
