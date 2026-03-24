@@ -477,6 +477,11 @@ func TestBrokerUnavailable_DegradedMode(t *testing.T) {
 		done <- pl.Run(ctx)
 	}()
 
+	// Simulate a prior partition assignment so that degraded mode — not a
+	// missing partition — is the sole reason /readyz returns 503.
+	time.Sleep(10 * time.Millisecond)
+	health.SetPartitionsAssigned(true)
+
 	// Wait for threshold to be reached (3 failures × 20ms interval = ~60ms).
 	time.Sleep(120 * time.Millisecond)
 
@@ -945,6 +950,81 @@ func TestReadyz_NotReadyAfterAllPartitionsRevoked(t *testing.T) {
 	pl.OnPartitionsRevoked(partitions)
 	if health.IsReady() {
 		t.Error("expected IsReady() == false after all partitions are revoked")
+	}
+}
+
+func TestReadyz_StillReadyAfterPartialRevoke(t *testing.T) {
+	kafka := newMockKafka()
+	disp := newMockDispatcher()
+	coord := newMockCoordinator()
+
+	pl, health := newTestPollLoop(kafka, disp, coord)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- pl.Run(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	all := []dispatcher.Partition{
+		{Topic: "test", Partition: 0},
+		{Topic: "test", Partition: 1},
+		{Topic: "test", Partition: 2},
+	}
+	subset := []dispatcher.Partition{
+		{Topic: "test", Partition: 2},
+	}
+
+	pl.OnPartitionsAssigned(all)
+	if !health.IsReady() {
+		t.Fatal("expected IsReady() == true after assignment")
+	}
+
+	// Revoke only one of three — two remain assigned, must still be ready.
+	pl.OnPartitionsRevoked(subset)
+	if !health.IsReady() {
+		t.Errorf("expected IsReady() == true after partial revoke (2 of 3 partitions remain)")
+	}
+}
+
+func TestReadyz_ReadyAfterReassignment(t *testing.T) {
+	kafka := newMockKafka()
+	disp := newMockDispatcher()
+	coord := newMockCoordinator()
+
+	pl, health := newTestPollLoop(kafka, disp, coord)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- pl.Run(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	partitions := []dispatcher.Partition{
+		{Topic: "test", Partition: 0},
+		{Topic: "test", Partition: 1},
+	}
+
+	// Full cycle: assign → full revoke → re-assign (KEDA scale-down/up).
+	pl.OnPartitionsAssigned(partitions)
+	if !health.IsReady() {
+		t.Fatal("expected ready after first assignment")
+	}
+
+	pl.OnPartitionsRevoked(partitions)
+	if health.IsReady() {
+		t.Fatal("expected not ready after full revoke")
+	}
+
+	pl.OnPartitionsAssigned(partitions)
+	if !health.IsReady() {
+		t.Error("expected IsReady() == true after re-assignment following full revoke")
 	}
 }
 
