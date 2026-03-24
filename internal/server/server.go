@@ -3,7 +3,9 @@
 //
 // Endpoints:
 //   - GET /healthz — liveness probe (200 if poll loop goroutine is running)
-//   - GET /readyz  — readiness probe (200 if not degraded, 503 otherwise)
+//   - GET /readyz  — readiness probe (200 if not degraded and at least one
+//                    partition is assigned; 503 during startup, degraded mode,
+//                    or after all partitions are revoked)
 //   - GET /metrics — Prometheus metrics in exposition format
 package server
 
@@ -105,8 +107,9 @@ func healthzHandler(health HealthChecker) http.HandlerFunc {
 }
 
 // readyzHandler returns an HTTP handler for the readiness probe.
-// Returns 200 OK if the service is ready for traffic (not degraded),
-// 503 otherwise.
+// Returns 200 OK only when the service is not degraded AND at least one
+// partition is currently assigned. Returns 503 during startup (before
+// the first rebalance) or when all partitions are revoked.
 func readyzHandler(health HealthChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if health.IsReady() {

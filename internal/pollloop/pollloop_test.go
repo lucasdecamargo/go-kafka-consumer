@@ -521,6 +521,13 @@ func TestBrokerRecovery_ExitsDegradedMode(t *testing.T) {
 		done <- pl.Run(ctx)
 	}()
 
+	// Simulate an initial partition assignment so that /readyz can
+	// return 200 once the consumer recovers from degraded mode.
+	// In tests the mock kafka never fires rebalance callbacks, so we
+	// set the flag directly on the Health object.
+	time.Sleep(10 * time.Millisecond)
+	health.SetPartitionsAssigned(true)
+
 	// Wait for degraded mode then recovery.
 	time.Sleep(200 * time.Millisecond)
 
@@ -553,8 +560,10 @@ func TestCircuitBreakerOpen_EntersDegradedMode(t *testing.T) {
 		done <- pl.Run(ctx)
 	}()
 
-	// Wait for poll loop to start.
-	time.Sleep(20 * time.Millisecond)
+	// Simulate an initial partition assignment. In tests the mock kafka
+	// never fires rebalance callbacks, so we set the flag directly.
+	time.Sleep(10 * time.Millisecond)
+	health.SetPartitionsAssigned(true)
 
 	// Simulate circuit breaker opening.
 	disp.circuitCh <- circuit.Open
@@ -824,13 +833,18 @@ func TestHealthProbes(t *testing.T) {
 	}
 
 	h.SetLive(true)
+	// Readiness requires both ready=true AND partitionsAssigned=true.
 	h.SetReady(true)
+	if h.IsReady() {
+		t.Error("expected not ready when ready=true but no partition assigned yet")
+	}
 
+	h.SetPartitionsAssigned(true)
 	if !h.IsLive() {
 		t.Error("expected live after SetLive(true)")
 	}
 	if !h.IsReady() {
-		t.Error("expected ready after SetReady(true)")
+		t.Error("expected ready after SetReady(true) and SetPartitionsAssigned(true)")
 	}
 
 	h.SetReady(false)
@@ -839,6 +853,98 @@ func TestHealthProbes(t *testing.T) {
 	}
 	if !h.IsLive() {
 		t.Error("expected still live when only readiness changed")
+	}
+
+	// Restore ready, then revoke all partitions — should become not ready.
+	h.SetReady(true)
+	h.SetPartitionsAssigned(false)
+	if h.IsReady() {
+		t.Error("expected not ready after all partitions revoked")
+	}
+}
+
+func TestReadyz_NotReadyBeforePartitionAssignment(t *testing.T) {
+	kafka := newMockKafka()
+	disp := newMockDispatcher()
+	coord := newMockCoordinator()
+
+	pl, health := newTestPollLoop(kafka, disp, coord)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- pl.Run(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+
+	// Poll loop is running (live) but no partition has been assigned yet.
+	time.Sleep(30 * time.Millisecond)
+
+	if !health.IsLive() {
+		t.Fatal("expected IsLive() == true once Run() starts")
+	}
+	if health.IsReady() {
+		t.Error("expected IsReady() == false before any partition is assigned")
+	}
+}
+
+func TestReadyz_ReadyAfterPartitionAssignment(t *testing.T) {
+	kafka := newMockKafka()
+	disp := newMockDispatcher()
+	coord := newMockCoordinator()
+
+	pl, health := newTestPollLoop(kafka, disp, coord)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- pl.Run(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	// Simulate the rebalance callback that the Kafka adapter fires.
+	pl.OnPartitionsAssigned([]dispatcher.Partition{
+		{Topic: "test", Partition: 0},
+		{Topic: "test", Partition: 1},
+	})
+
+	if !health.IsReady() {
+		t.Error("expected IsReady() == true after partitions are assigned")
+	}
+}
+
+func TestReadyz_NotReadyAfterAllPartitionsRevoked(t *testing.T) {
+	kafka := newMockKafka()
+	disp := newMockDispatcher()
+	coord := newMockCoordinator()
+
+	pl, health := newTestPollLoop(kafka, disp, coord)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- pl.Run(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	partitions := []dispatcher.Partition{
+		{Topic: "test", Partition: 0},
+		{Topic: "test", Partition: 1},
+	}
+
+	// Assign then immediately revoke all partitions (scale-down scenario).
+	pl.OnPartitionsAssigned(partitions)
+	if !health.IsReady() {
+		t.Fatal("expected IsReady() == true after assignment")
+	}
+
+	pl.OnPartitionsRevoked(partitions)
+	if health.IsReady() {
+		t.Error("expected IsReady() == false after all partitions are revoked")
 	}
 }
 
@@ -977,7 +1083,10 @@ func TestHalfOpen_StaysDegraded(t *testing.T) {
 		done <- pl.Run(ctx)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	// Simulate an initial partition assignment. In tests the mock kafka
+	// never fires rebalance callbacks, so we set the flag directly.
+	time.Sleep(10 * time.Millisecond)
+	health.SetPartitionsAssigned(true)
 
 	// Circuit opens.
 	disp.circuitCh <- circuit.Open

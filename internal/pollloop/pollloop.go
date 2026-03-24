@@ -43,6 +43,12 @@ type PollLoop struct {
 	// detection (ADR-0006).
 	commitFailures int
 
+	// assignedCount is the number of partitions currently assigned to
+	// this consumer instance. Incremented in OnPartitionsAssigned and
+	// decremented in OnPartitionsRevoked. Only accessed from the poll
+	// loop goroutine (via rebalance callbacks fired inside kafka.Poll).
+	assignedCount int
+
 	// Tracks which partitions are currently paused for backpressure.
 	// Key: partition ID, Value: true if paused due to backpressure.
 	pausedPartitions map[int32]bool
@@ -432,17 +438,25 @@ func (pl *PollLoop) resumeAllPausedPartitions() {
 
 // OnPartitionsAssigned implements RebalanceHandler. Called by the Kafka
 // adapter during a rebalance callback when new partitions are assigned.
+// Sets the health readiness partition flag on the first assignment so
+// that /readyz begins returning 200 only after the consumer is
+// actively participating in the consumer group.
 func (pl *PollLoop) OnPartitionsAssigned(partitions []dispatcher.Partition) {
 	pl.logger.Info("partitions assigned",
 		slog.Int("count", len(partitions)),
 	)
+	pl.assignedCount += len(partitions)
+	pl.health.SetPartitionsAssigned(true)
 	pl.m.PartitionsAssigned.Add(float64(len(partitions)))
 	pl.dispatcher.OnPartitionsAssigned(partitions)
 }
 
 // OnPartitionsRevoked implements RebalanceHandler. Called by the Kafka
 // adapter during a rebalance callback when partitions are revoked.
-// Drains in-flight work, commits offsets, and resets state.
+// Drains in-flight work, commits offsets, and resets state. Clears the
+// health readiness partition flag when the last partition is revoked so
+// that /readyz returns 503 until a new assignment is received (e.g.
+// after a scale-down event or a full rebalance).
 func (pl *PollLoop) OnPartitionsRevoked(partitions []dispatcher.Partition) {
 	pl.logger.Info("partitions revoked",
 		slog.Int("count", len(partitions)),
@@ -450,6 +464,12 @@ func (pl *PollLoop) OnPartitionsRevoked(partitions []dispatcher.Partition) {
 
 	pl.m.Rebalances.Inc()
 	pl.m.PartitionsAssigned.Sub(float64(len(partitions)))
+
+	pl.assignedCount -= len(partitions)
+	if pl.assignedCount <= 0 {
+		pl.assignedCount = 0
+		pl.health.SetPartitionsAssigned(false)
+	}
 
 	// 1. Notify Dispatcher — drains in-flight batches for revoked partitions.
 	pl.dispatcher.OnPartitionsRevoked(partitions)
