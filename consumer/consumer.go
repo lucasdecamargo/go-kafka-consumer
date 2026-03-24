@@ -113,6 +113,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 		slog.Int("workers", c.cfg.WorkerCount),
 	)
 
+	c.warnKubernetesGracePeriod(logger)
+
 	// 1. Create OffsetCoordinator.
 	coord := offset.NewCoordinator(
 		offset.WithLogger(logger.With(slog.String("component", "offset-coordinator"))),

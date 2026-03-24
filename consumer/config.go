@@ -57,10 +57,37 @@ type Config struct {
 	// failures before entering degraded mode. Default: 3.
 	CommitFailureThreshold int
 
-	// ShutdownTimeout is the maximum time for graceful shutdown.
-	// Must be less than Kubernetes terminationGracePeriodSeconds.
+	// ShutdownTimeout is the maximum time the consumer is given to drain
+	// in-flight work, commit final offsets, and close the Kafka client
+	// after the context is canceled.
+	//
+	// Kubernetes relationship — terminationGracePeriodSeconds must satisfy:
+	//
+	//   terminationGracePeriodSeconds >= ShutdownTimeout + PreStopDelay + 10s
+	//
+	// The 10s buffer accounts for SIGTERM propagation latency, cgroup
+	// freezer delays, and other kernel overhead. If the pod is
+	// force-killed before shutdown completes, in-flight messages may be
+	// reprocessed and uncommitted offsets will be lost.
+	//
+	// Example: ShutdownTimeout=25s, PreStopDelay=5s → set
+	// terminationGracePeriodSeconds to at least 40.
+	//
 	// Default: 25s.
 	ShutdownTimeout time.Duration
+
+	// PreStopDelay is the duration of the preStop hook configured in the
+	// pod spec (if any). A preStop sleep gives Kubernetes time to remove
+	// the pod from Service endpoints before SIGTERM is sent, preventing
+	// new requests from being routed to a terminating pod.
+	//
+	// Set this to match the sleep duration in your pod's lifecycle.preStop
+	// hook. The value is used only to compute the minimum required
+	// terminationGracePeriodSeconds and to emit a startup warning when
+	// running in Kubernetes. It does not affect shutdown behaviour.
+	//
+	// Default: 0 (no preStop hook).
+	PreStopDelay time.Duration
 
 	// Circuit breaker configuration.
 
@@ -172,6 +199,9 @@ func (c *Config) Validate() error {
 	}
 	if c.ShutdownTimeout <= 0 {
 		return errors.New("config: shutdown timeout must be positive")
+	}
+	if c.PreStopDelay < 0 {
+		return errors.New("config: pre-stop delay must not be negative")
 	}
 	if c.CBFailureThreshold <= 0 || c.CBFailureThreshold > 1 {
 		return errors.New("config: circuit breaker failure threshold must be between 0 and 1 (exclusive/inclusive)")
