@@ -19,6 +19,7 @@ You implement a single `BatchProcessor` function. The framework handles all Kafk
 - **Offset management** — Per-partition offset tracking with periodic commits
 - **Graceful shutdown** — Drains in-flight work, commits final offsets, and closes the consumer group
 - **Observability** — Prometheus metrics, structured logging (`slog`), and HTTP health probes
+- **Kubernetes-native** — readiness probe gated on partition assignment, consumer lag metric for KEDA auto-scaling, and configurable grace period validation
 - **Pluggable ordering** — Unordered (max throughput), partition-ordered, or key-ordered dispatch modes
 
 ## Installation
@@ -87,6 +88,8 @@ Start with `consumer.DefaultConfig()` and override what you need:
 | `MaxRetries` | `3` | Retry attempts for failed batches |
 | `CommitInterval` | `5s` | Offset commit frequency |
 | `ShutdownTimeout` | `25s` | Max graceful shutdown duration |
+| `PreStopDelay` | `0` | Duration of pod `preStop` hook; used for Kubernetes grace period validation |
+| `LagReportInterval` | `10s` | How often librdkafka emits stats for `kafka_consumer_lag` updates |
 | `DLQTopic` | `""` | Dead letter queue topic (empty = disabled) |
 | `HealthAddr` | `":8080"` | Health/metrics HTTP server address (empty = disabled) |
 
@@ -129,7 +132,30 @@ reg := prometheus.NewRegistry()
 c, err := consumer.New(cfg, processor, consumer.WithMetrics(reg))
 ```
 
-The built-in HTTP server at `HealthAddr` exposes `/metrics` (Prometheus) and `/healthz` (liveness).
+Key metrics exposed:
+
+| Metric | Type | Description |
+|---|---|---|
+| `kafka_consumer_lag` | Gauge | Uncommitted message lag `{group, topic, partition}`. Primary KEDA scaling signal. |
+| `kafka_consumer_messages_polled_total` | Counter | Messages received from Kafka per partition. |
+| `kafka_consumer_messages_processed_total` | Counter | Messages processed `{status, partition}` — `success`, `non_retryable`, `retries_exhausted`. |
+| `kafka_consumer_message_delay_seconds` | Histogram | Poll-to-completion latency. Operator SLO metric. |
+| `kafka_consumer_circuit_breaker_state` | Gauge | `0`=closed, `1`=half-open, `2`=open. |
+| `kafka_consumer_degraded_mode` | Gauge | `1` when in degraded mode. |
+
+See [`docs/metrics.md`](docs/metrics.md) for the full reference and PromQL dashboard queries.
+
+### Health Probes
+
+The HTTP server at `HealthAddr` exposes three endpoints:
+
+| Endpoint | Probe | 200 when... |
+|---|---|---|
+| `/healthz` | Liveness | Poll loop goroutine is running |
+| `/readyz` | Readiness | Not degraded **and** at least one partition is assigned |
+| `/metrics` | — | Always (Prometheus scrape target) |
+
+`/readyz` returns `503` during the startup window (before the first rebalance assigns partitions) and again when all partitions are revoked (scale-down scenario). This prevents Kubernetes from routing traffic to a consumer that has not yet joined the consumer group.
 
 ### Logging
 
@@ -138,6 +164,65 @@ Pass a structured logger:
 ```go
 c, err := consumer.New(cfg, processor, consumer.WithLogger(slog.Default()))
 ```
+
+## Kubernetes
+
+### Graceful Shutdown
+
+Set `terminationGracePeriodSeconds` to satisfy:
+
+```
+terminationGracePeriodSeconds ≥ ShutdownTimeout + PreStopDelay + 10s
+```
+
+The 10-second buffer accounts for SIGTERM propagation latency and kernel overhead. With defaults (`ShutdownTimeout=25s`, no preStop hook), set `terminationGracePeriodSeconds` to at least **35 seconds**.
+
+Set `cfg.PreStopDelay` to match your pod's `lifecycle.preStop` sleep duration:
+
+```go
+cfg.ShutdownTimeout = 25 * time.Second
+cfg.PreStopDelay    = 5 * time.Second
+// → terminationGracePeriodSeconds must be ≥ 40
+```
+
+To enable startup validation, mirror the grace period in the container `env` block — Kubernetes does not inject this automatically:
+
+```yaml
+terminationGracePeriodSeconds: 60
+spec:
+  containers:
+    - name: consumer
+      env:
+        - name: TERMINATION_GRACE_PERIOD_SECONDS
+          value: "60"
+```
+
+If `TERMINATION_GRACE_PERIOD_SECONDS` is absent or too small, the consumer logs a `Warn` at startup with the recommended minimum. Detection uses `KUBERNETES_SERVICE_HOST`, which is injected automatically by the kubelet into every pod.
+
+### KEDA Auto-Scaling
+
+`kafka_consumer_lag` is the primary KEDA scaling signal. Use a Prometheus trigger pointing at your metrics endpoint:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: my-consumer
+spec:
+  scaleTargetRef:
+    name: my-consumer
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc:9090
+        metricName: kafka_consumer_lag_total
+        query: sum(kafka_consumer_lag{group="my-group"})
+        threshold: "1000"   # scale out when lag exceeds 1000 messages per replica
+```
+
+Set `minReplicaCount: 1` (not 0) to keep at least one consumer in the group — a scale-to-zero consumer stops committing offsets and lag can grow unbounded.
 
 ## Examples
 

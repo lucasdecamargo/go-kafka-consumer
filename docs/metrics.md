@@ -4,6 +4,16 @@ All metrics use the `kafka_consumer_` namespace prefix and are registered via th
 
 Metric design informed by [Confluent Parallel Consumer](https://github.com/confluentinc/parallel-consumer), [Jaeger Kafka Ingester](https://github.com/jaegertracing/jaeger), kafka_exporter, segmentio/kafka-go, and [WarpStream's time-based lag analysis](https://www.warpstream.com/blog/the-kafka-metric-youre-not-using-stop-counting-messages-start-measuring-time).
 
+## Consumer Lag Metric
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `kafka_consumer_lag` | Gauge | `group`, `topic`, `partition` | Uncommitted message lag per partition: `hi_offset − committed_offset`, sourced from librdkafka's internal statistics (no admin API calls). Updated every `LagReportInterval` (default 10s). Partitions with unknown lag (before the first `CommitOffsets()`) are skipped and report nothing. **Primary KEDA scaling signal.** |
+
+> **How it works:** librdkafka emits a JSON stats blob every `statistics.interval.ms` milliseconds (set via `Config.LagReportInterval`). The framework parses `topics[t].partitions[p].consumer_lag` from this blob, which equals `hi_offset − committed_offset` using the client's cached high-watermark metadata. No broker admin API call is made; the high-watermark is updated as part of normal fetch responses.
+
+> **Limitation:** `consumer_lag` uses the *committed* offset (not the stored/pending offset). During periods of active processing the value can overshoot the actual pending messages. Use `record_age_seconds` for real-time processing-pipeline lag.
+
 ## Poll Loop Metrics
 
 | Metric | Type | Labels | Description |
@@ -165,6 +175,26 @@ rate(kafka_consumer_messages_polled_total[5m]) > 0
 kafka_consumer_partitions_paused
 ```
 
+### Consumer lag — total across all partitions (KEDA scaling signal)
+```promql
+sum(kafka_consumer_lag{group="my-group"})
+```
+
+### Consumer lag per partition
+```promql
+kafka_consumer_lag{group="my-group"}
+```
+
+### Consumer lag per topic (sum across partitions)
+```promql
+sum by (topic)(kafka_consumer_lag{group="my-group"})
+```
+
+### Alert: total lag exceeds threshold
+```promql
+sum(kafka_consumer_lag{group="my-group"}) > 10000
+```
+
 ## Latency Metrics Breakdown
 
 The three latency histograms decompose the full message lifecycle:
@@ -191,6 +221,6 @@ produce                             polled      worker picks up    done
 
 | Metric | Rationale |
 |--------|-----------|
-| Consumer lag (offset-based) | Requires broker log-end offset (high watermark) — belongs in external tooling like [Burrow](https://github.com/linkedin/Burrow), [kafka_exporter](https://github.com/danielqsj/kafka_exporter), or Confluent Control Center, which can monitor even when the consumer is down. Our `record_age_seconds` provides the time-domain equivalent without admin API calls. |
 | Bytes consumed | Low value for a framework that operates on message semantics, not raw byte throughput. |
-| Fetch rate / fetch latency | librdkafka internals — confluent-kafka-go exposes these via its stats callback (`statistics.interval.ms`) if operators need them. |
+| Fetch rate / fetch latency | librdkafka internals — exposed via the same stats callback that drives `kafka_consumer_lag`. Available in the raw stats JSON if operators need them. |
+| Consumer lag from external tooling | `kafka_consumer_lag` (above) covers the in-process view. For monitoring consumer lag when the consumer is **down**, use external tooling like [Burrow](https://github.com/linkedin/Burrow), [kafka_exporter](https://github.com/danielqsj/kafka_exporter), or Confluent Control Center — they query broker log-end offsets directly. |

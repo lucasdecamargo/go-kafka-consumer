@@ -269,6 +269,28 @@ const (
 
 Degraded mode: pause all partitions, stop dispatch, continue `Poll()`, readiness = unhealthy, liveness = healthy. Exits only when **all reasons are cleared**.
 
+### Health Probe State Machine
+
+`/readyz` returns `200` only when **both** conditions hold:
+
+| Condition | Set by | Cleared by |
+|-----------|--------|------------|
+| `ready = true` | Startup; restored when all degraded reasons clear | Any `enterDegradedMode()` call |
+| `partitionsAssigned = true` | First `OnPartitionsAssigned` callback | `OnPartitionsRevoked` when last partition is removed |
+
+Probe outcomes:
+
+| State | `/healthz` | `/readyz` |
+|-------|-----------|-----------|
+| Poll loop not started | 503 | 503 |
+| Running, no assignment yet (startup) | 200 | 503 |
+| Running, partitions assigned | 200 | 200 |
+| Degraded (broker or circuit breaker) | 200 | 503 |
+| All partitions revoked (scale-down) | 200 | 503 |
+| Shutdown complete | 503 | 503 |
+
+This ensures Kubernetes removes the pod from Service endpoints before SIGTERM is sent (when combined with a preStop hook), and does not route traffic to a pod that has not yet received partition assignments.
+
 ---
 
 ## Cross-Cutting Concerns (ADR-0008)
@@ -331,7 +353,10 @@ Key parameters:
 - Batch size and linger time
 - Poll interval
 - Commit interval (default 5s)
-- Shutdown timeout (default 25s, must be < K8s `terminationGracePeriodSeconds`)
+- Shutdown timeout (default 25s)
+- Pre-stop delay (default 0) — mirrors the pod's `lifecycle.preStop` hook duration
+- **Kubernetes grace period requirement:** `terminationGracePeriodSeconds ≥ ShutdownTimeout + PreStopDelay + 10s`
+- Lag report interval (default 10s) — controls how often librdkafka emits stats for `kafka_consumer_lag`
 - Commit failure threshold (default 3, triggers degraded mode on broker unavailability)
 - Circuit breaker: min requests (3), failure threshold (0.6), open timeout (30s), max probe requests (1), sliding window (60s)
 - Max retries
@@ -342,9 +367,9 @@ Key parameters:
 
 ## Observability
 
-- **Metrics:** consumer lag, throughput (msg/sec), batch processing latency, dispatcher queue depth, worker utilization, offset commit rate, error rates (transient/non-retryable), DLQ production rate, circuit breaker state transitions, degraded mode duration.
-- **Structured logging:** JSON format with correlation IDs.
-- **Health checks:** liveness and readiness endpoints for orchestrator integration.
+- **Metrics:** `kafka_consumer_lag{group,topic,partition}` (primary KEDA scaling signal, sourced from librdkafka stats), throughput (msg/sec), batch processing latency, dispatcher queue depth, worker utilization, offset commit rate, error rates (transient/non-retryable), DLQ production rate, circuit breaker state, degraded mode. See [`docs/metrics.md`](metrics.md) for the full reference.
+- **Structured logging:** JSON format via `slog`, injected per component via `WithLogger()`.
+- **Health checks:** `/healthz` (liveness — poll loop running), `/readyz` (readiness — not degraded and partition assigned). See [Health Probe State Machine](#health-probe-state-machine) above.
 
 ---
 
@@ -412,8 +437,8 @@ Detailed execution path documentation lives in `docs/scenarios/`. Each scenario 
 
 ## Implementation Status
 
-All requirements are in **Planned** status. Initial implementation will focus on:
-1. UnorderedDispatcher (the default ordering mode)
-2. Per-partition batching with one in-flight batch (simplest correct offset strategy)
+All P0 requirements are **Implemented**. Future work:
 
-Future implementations: PartitionDispatcher, KeyDispatcher, contiguous offset tracking.
+- `PartitionDispatcher` (FR-2.11.2) — one channel/worker per partition, preserves per-partition ordering
+- `KeyDispatcher` (FR-2.11.3) — hash-routed channels, preserves per-key ordering across partitions
+- Contiguous offset tracking — multiple in-flight batches per partition for higher intra-partition concurrency
